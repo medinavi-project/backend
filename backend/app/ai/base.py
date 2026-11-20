@@ -1,0 +1,13 @@
+from typing import Protocol
+
+from app.schemas.ai import AnalysisOutput, ChatInput, ChatOutput, SummaryOutput
+from app.schemas.chat import Symptoms
+
+
+class AIProvider(Protocol):
+    source: str
+
+    async def process_chat(self, request: ChatInput) -> ChatOutput: ...
+    async def analyze_symptoms(self, symptoms: Symptoms) -> AnalysisOutput: ...
+    async def summarize_medication(self, medication: dict) -> SummaryOutput: ...
+    async def close(self) -> None: ...

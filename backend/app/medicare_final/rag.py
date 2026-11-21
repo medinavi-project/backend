@@ -8,6 +8,7 @@ from .mfds_api import MFDSClient, MFDSError
 from .drug_search import search_drug
 from .data_processor import process_drug, now_kst
 from .dur_checker import KINDS, check_type, check_pair
+from .mfds_cache import policy as cache_policy, read_record
 
 
 def search_drugs(drug_name, *, client=None):
@@ -104,16 +105,62 @@ def build_drug_context(
             )
     client = client or MFDSClient()
     products, dur_results, reasons = [], {}, []
+    cache_config = cache_policy()
+    cached_evidence, cache_conflicts = [], []
     for seq in seqs:
-        responses = {
-            name: _read(client, method, seq)
-            for name, method in [
-                ("permit_list", client.permit_list),
-                ("permit", client.permit_detail),
-                ("easy", client.easy),
-                ("ingredients", client.ingredients),
-            ]
-        }
+        responses = {}
+        for name, method in [
+            ("permit_list", client.permit_list),
+            ("permit", client.permit_detail),
+            ("easy", client.easy),
+            ("ingredients", client.ingredients),
+        ]:
+            cached = (
+                read_record(seq, name, cache_config)
+                if cache_config["enabled"]
+                else None
+            )
+            use_cache = (
+                cached
+                and cached["cache_status"] == "fresh"
+                and not cache_config["force_refresh"]
+            )
+            if use_cache and not cache_config["api_first"]:
+                current = dict(cached)
+            else:
+                current = _read(client, method, seq)
+                if current["status"] in ("api_error", "incomplete") and use_cache:
+                    current = dict(cached)
+                    current["api_status"] = "api_error_or_incomplete"
+                elif (
+                    current["status"] in ("ok", "no_results")
+                    and cached
+                    and current["items"] != cached["items"]
+                ):
+                    cache_conflicts.append(
+                        {
+                            "item_seq": seq,
+                            "source": name,
+                            "cache_retrieved_at": cached["retrieved_at"],
+                            "status": "source_difference_requires_review",
+                        }
+                    )
+                elif (
+                    current["status"] in ("api_error", "incomplete")
+                    and cached
+                    and cache_config["return_stale"]
+                ):
+                    cached_evidence.append(
+                        {
+                            "item_seq": seq,
+                            "source": name,
+                            "cache_status": cached["cache_status"],
+                            "retrieved_at": cached["retrieved_at"],
+                            "items": cached["items"],
+                            "notice": "참고용 캐시이며 현재 공식 근거로 검증되지 않았습니다.",
+                        }
+                    )
+            responses[name] = current
         if (
             responses["permit_list"]["status"] != "ok"
             or len(responses["permit_list"]["items"]) != 1
@@ -129,6 +176,22 @@ def build_drug_context(
         except ValueError:
             reasons.append(f"{seq}: 출처별 품목코드 불일치")
             continue
+        for origin, part in responses.items():
+            if part.get("cache_status"):
+                product["source"][origin].update(
+                    cache_status=part["cache_status"],
+                    retrieved_at=part["retrieved_at"],
+                    api_status=part.get("api_status"),
+                )
+        for doc in product["documents"]:
+            origin_info = product["source"][doc["source"]]
+            doc["retrieved_at"] = origin_info["retrieved_at"]
+            doc["cache_status"] = origin_info.get("cache_status", "live")
+        if product.get("approval_status") and any(
+            x in str(product["approval_status"])
+            for x in ("취소", "취하", "만료", "폐지")
+        ):
+            reasons.append(f"{seq}: 허가 비활성 상태 확인 필요")
         if not (product["warnings"] or product["precautions"]):
             reasons.append(f"{seq}: 공식 경고·주의사항 근거 없음")
         if product["source"]["ingredients"]["status"] != "ok":
@@ -176,12 +239,14 @@ def build_drug_context(
             if not product[field]:
                 reasons.append(f"{product['item_seq']}: 요청한 {field} 근거 없음")
         for doc in docs:
+            provenance = product["source"][doc["source"]]
             source_index[doc["source_id"]] = {
                 "url": doc["url"],
                 "item_seq": product["item_seq"],
                 "field": doc["field"],
                 "source_field": doc["source_field"],
-                "retrieved_at": product["retrieved_at"],
+                "retrieved_at": provenance["retrieved_at"],
+                "cache_status": provenance.get("cache_status", "live"),
             }
         metadata_id = (
             "MFDS-"
@@ -205,19 +270,26 @@ def build_drug_context(
             "url": product["source"]["permit_list"]["url"],
             "item_seq": product["item_seq"],
             "field": "product_metadata",
-            "retrieved_at": product["retrieved_at"],
+            "retrieved_at": product["source"]["permit_list"]["retrieved_at"],
+            "cache_status": product["source"]["permit_list"].get(
+                "cache_status", "live"
+            ),
         }
         source_index[ingredients_id] = {
             "url": product["source"]["ingredients"]["url"],
             "item_seq": product["item_seq"],
             "field": "ingredients",
-            "retrieved_at": product["retrieved_at"],
+            "retrieved_at": product["source"]["ingredients"]["retrieved_at"],
+            "cache_status": product["source"]["ingredients"].get(
+                "cache_status", "live"
+            ),
         }
         source_index[appearance_id] = {
             "url": product["source"]["permit"]["url"],
             "item_seq": product["item_seq"],
             "field": "appearance_and_approval_status",
-            "retrieved_at": product["retrieved_at"],
+            "retrieved_at": product["source"]["permit"]["retrieved_at"],
+            "cache_status": product["source"]["permit"].get("cache_status", "live"),
         }
         evidence.append(
             {
@@ -309,6 +381,8 @@ def build_drug_context(
     return {
         "status": "incomplete" if reasons else "ready",
         "context": None if reasons else context,
+        "cached_evidence": cached_evidence,
+        "cache_conflicts": cache_conflicts,
         "reasons": reasons,
         "products": products,
         "dur": dur_results,

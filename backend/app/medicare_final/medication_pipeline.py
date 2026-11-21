@@ -3,10 +3,15 @@
 import json
 import re
 from decimal import Decimal, InvalidOperation
-from .drug_search import search_drug, normalize, strengths, form
+from .drug_search import search_drug, normalize, strengths, form, find_local_candidates
 from .mfds_api import MFDSClient, MFDSError
 from .rag import build_drug_context, search_drugs
-from .response_validator import official_data, controlled_effect_rephrase
+from .response_validator import (
+    official_data,
+    controlled_effect_rephrase,
+    validate_source_defined_terms,
+    effect_claim_diagnostics,
+)
 from .clova_client import ClovaClient, ClovaError
 
 # 의약품명으로 확인한 것이 아닌, 검토할 문자열 후보이다.
@@ -147,6 +152,67 @@ def extract_candidates(ocr_text):
                 "related_candidates": [],
             }
         )
+    # 사전 기반 구간은 같은 줄의 인접한 최대 두 토큰만 결합한다.
+    tokens = list(re.finditer(r"[가-힣A-Za-z0-9]+", ocr_text))
+    tokens_truncated = len(tokens) > 300
+    tokens = tokens[:300]
+    local_status = "available"
+    for index, token in enumerate(tokens):
+        windows = [(token.start(), token.end())]
+        if index + 1 < len(tokens):
+            nxt = tokens[index + 1]
+            gap = ocr_text[token.end() : nxt.start()]
+            if gap and len(gap) <= 6 and gap.isspace() and "\n" not in gap:
+                windows.append((token.start(), nxt.end()))
+        for start, end in windows:
+            raw = ocr_text[start:end]
+            if len(normalize(raw)) > 30:
+                continue
+            hints = find_local_candidates(raw)
+            if hints["status"] == "dictionary_unavailable":
+                local_status = "dictionary_unavailable"
+            if not hints["candidates"]:
+                continue
+            # 기존의 정확한 더 긴 구간은 보존하고, 더 짧은 겹친 단편은 교체한다.
+            if any(
+                x["evidence"]["start"] <= start and x["evidence"]["end"] >= end
+                for x in items
+            ):
+                continue
+            overlap = [
+                x
+                for x in items
+                if start <= x["evidence"]["start"] and x["evidence"]["end"] <= end
+            ]
+            if any(
+                x["evidence"]["start"] < end
+                and x["evidence"]["end"] > start
+                and x not in overlap
+                for x in items
+            ):
+                continue
+            for old in overlap:
+                items.remove(old)
+            if raw in seen and not overlap:
+                continue
+            seen.add(raw)
+            search_name = re.sub(
+                r"\s+", "", re.sub(r"밀리그람", "밀리그램", raw, flags=re.I)
+            )
+            items.append(
+                {
+                    "raw_text": raw,
+                    "evidence": {"start": start, "end": end},
+                    "search_name": search_name,
+                    "status": "unconfirmed",
+                    "search_variants": list(
+                        dict.fromkeys([raw, search_name, normalize(raw)])
+                    ),
+                    "related_candidates": [],
+                    "local_dictionary": hints,
+                }
+            )
+    items.sort(key=lambda item: item["evidence"]["start"])
     # 표기 연관성만 기록하고 제품은 병합하지 않는다.
     for item in items:
         item["related_candidates"] = [
@@ -157,7 +223,9 @@ def extract_candidates(ocr_text):
         ]
     return {
         "candidates": items[:MAX_CANDIDATES],
-        "truncated": len(items) > MAX_CANDIDATES,
+        "truncated": len(items) > MAX_CANDIDATES or tokens_truncated,
+        "dictionary_status": local_status,
+        "dictionary_coverage": "partial",
         "notice": "형태 기반 후보로, 약품명 확인이 아닙니다. 숫자·기관명 등이 섞이거나 약품이 누락될 수 있습니다.",
     }
 
@@ -378,6 +446,7 @@ def parse_summary(answer, effects, *, allow_code_fence=False):
         "status": "rejected",
         "summaries": [],
         "medical_expert_review": "not_performed",
+        "reason_codes": ["invalid_json_or_schema"],
     }
     try:
         if allow_code_fence and isinstance(answer, str):
@@ -399,31 +468,31 @@ def parse_summary(answer, effects, *, allow_code_fence=False):
             if not isinstance(item, dict) or set(item) != {"item_seq", "summary"}:
                 return result
             seq, rows = item["item_seq"], item["summary"]
-            if (
-                not isinstance(seq, str)
-                or seq not in effects
-                or seq in seen
-                or not isinstance(rows, list)
-                or not 1 <= len(rows) <= 5
-            ):
+            if not isinstance(seq, str) or seq not in effects or seq in seen:
+                result["reason_codes"] = ["item_sequence_missing_mismatch_or_duplicate"]
+                return result
+            if not isinstance(rows, list) or not 1 <= len(rows) <= 5:
                 return result
             seen.add(seq)
             for row in rows:
                 if not isinstance(row, dict) or set(row) != {"text", "source_ids"}:
                     return result
                 text, ids = row["text"], row["source_ids"]
+                if not isinstance(text, str) or not 1 <= len(text.strip()) <= 1000:
+                    return result
                 if (
-                    not isinstance(text, str)
-                    or not 1 <= len(text.strip()) <= 1000
-                    or not isinstance(ids, list)
+                    not isinstance(ids, list)
                     or not ids
                     or any(not isinstance(s, str) or s not in effects[seq] for s in ids)
                 ):
+                    result["reason_codes"] = ["source_missing_or_wrong_product"]
                     return result
                 # 직접 원문과 같을 때만 자동 표시. 단순 출처 일치로 문장 의미를 승인하지 않는다.
                 exact = all(text.strip() == effects[seq][s].strip() for s in ids)
                 rules = [
-                    controlled_effect_rephrase(seq, text, effects[seq][s]) for s in ids
+                    validate_source_defined_terms(text, effects[seq][s])
+                    or controlled_effect_rephrase(seq, text, effects[seq][s])
+                    for s in ids
                 ]
                 controlled = not exact and all(rule is not None for rule in rules)
                 summary = {
@@ -436,12 +505,33 @@ def parse_summary(answer, effects, *, allow_code_fence=False):
                 }
                 if controlled:
                     summary["rule"] = rules[0]
+                    summary["reason_codes"] = [
+                        "source_defined_correspondence"
+                        if rules[0].get("method") == "source_defined_parentheticals"
+                        else "restricted_developer_rule"
+                    ]
+                    summary["evidence"] = {
+                        "source_ids": ids,
+                        "scope": "all_cited_documents_checked",
+                    }
+                elif exact:
+                    summary["reason_codes"] = ["exact_official_document"]
+                    summary["evidence"] = {
+                        "source_ids": ids,
+                        "scope": "all_cited_documents_checked",
+                    }
+                else:
+                    summary.update(
+                        effect_claim_diagnostics(text, [effects[seq][s] for s in ids])
+                    )
+                    summary["evidence"]["source_ids"] = ids
                 result["summaries"].append(summary)
         if not seen or seen != set(effects):
             return {
                 "status": "rejected",
                 "summaries": [],
                 "medical_expert_review": "not_performed",
+                "reason_codes": ["item_sequence_missing_mismatch_or_duplicate"],
             }
         statuses = {x["status"] for x in result["summaries"]}
         result["status"] = (
@@ -450,6 +540,11 @@ def parse_summary(answer, effects, *, allow_code_fence=False):
             else "verified_extractive"
             if statuses == {"verified_extractive"}
             else "supported_with_checks"
+        )
+        result["reason_codes"] = list(
+            dict.fromkeys(
+                code for row in result["summaries"] for code in row["reason_codes"]
+            )
         )
         return result
     except (ValueError, TypeError, KeyError):

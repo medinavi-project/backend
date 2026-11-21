@@ -5,3 +5,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+
+# Local Claude/Codex handoff
+/aigent.md
+
+# MFDS raw collection dumps (regenerate with mfds_collector)
+backend/app/medicare_final/data/mfds_collection.sqlite3
+backend/app/medicare_final/data/mfds_collection/*.csv
+backend/app/medicare_final/data/mfds_collection/permit.json

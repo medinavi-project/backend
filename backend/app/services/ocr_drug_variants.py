@@ -1,6 +1,6 @@
 import re
 
-from app.medicare.drug_search import normalize
+from app.medicare_final.drug_search import normalize
 
 
 def collect_names(text, extracted, limit=10):

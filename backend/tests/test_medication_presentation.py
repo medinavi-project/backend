@@ -30,7 +30,14 @@ def test_five_sections_and_no_extra_public_fields():
         "uncertain_medications",
     }
     card = data["medications"][0]
-    assert set(card) == {"item_seq", "name", "description", "guidance_status"}
+    assert set(card) == {
+        "item_seq",
+        "name",
+        "description",
+        "guidance_status",
+        "warning",
+    }
+    assert card["warning"] is None
     assert set(card["description"]) == {
         "purpose",
         "how_to_take",

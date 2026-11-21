@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from starlette.concurrency import run_in_threadpool
 
 from app.core.exceptions import BusinessException
@@ -12,10 +14,10 @@ class MedicationScanService:
         self.search_provider = search_provider
 
     async def analyze(self, text):
-        from app.services.precaution_rewriter import rewrite_precautions
+        from app.services.precaution_rewriter import rewrite_guidance
 
         result = await run_in_threadpool(self._analyze, text)
-        return await run_in_threadpool(rewrite_precautions, result, self.settings)
+        return await run_in_threadpool(rewrite_guidance, result, self.settings)
 
     def _analyze(self, text):
         from app.medicare_final.clova_client import ClovaClient, ClovaError
@@ -26,6 +28,8 @@ class MedicationScanService:
         from app.medicare_final.mfds_api import MFDSClient, MFDSError
         from app.services.drug_identity import (
             candidate_details,
+            corroborated_candidate,
+            identity_note,
             resolve_exact_scope,
             search_with_similarity,
             select_candidate,
@@ -46,34 +50,19 @@ class MedicationScanService:
         model = None
         try:
             extraction = extract_candidates(text)
-            matches, selected = [], []
-            for item in extraction["candidates"]:
+
+            def lookup(item):
                 name = item["search_name"]
-                # Only locally extracted, whole-line drug-shaped tokens leave the server.
-                # Embedded prose/identity-like matches are returned for review, not sent.
+                # Only the extracted drug-shaped name leaves the server. A name on
+                # a line with identity words is returned for review, not sent.
                 raw = item["raw_text"]
-                start, end = item["evidence"]["start"], item["evidence"]["end"]
-                line_start = text.rfind("\n", 0, start) + 1
-                line_end = text.find("\n", end)
-                line = (
-                    text[line_start : line_end if line_end != -1 else len(text)]
-                    .strip()
-                    .lstrip("*•")
-                    .strip()
-                )
-                if line != raw.strip() or any(
-                    word in raw
-                    for word in ("병원", "약국", "환자", "성명", "처방", "등록")
-                ):
-                    matches.append(
-                        {
-                            "recognized_name": raw,
-                            "match_status": "UNMATCHED",
-                            "review_reason": "PRIVACY_REVIEW_REQUIRED",
-                            "candidates": [],
-                        }
-                    )
-                    continue
+                if item["identity_words_on_line"]:
+                    return {
+                        "recognized_name": raw,
+                        "match_status": "UNMATCHED",
+                        "review_reason": "PRIVACY_REVIEW_REQUIRED",
+                        "candidates": [],
+                    }
                 found = (
                     self.search_provider.search(client, name)
                     if self.search_provider
@@ -82,33 +71,41 @@ class MedicationScanService:
                 if self.search_provider is None:
                     found = resolve_exact_scope(client, name, found)
                 candidate = select_candidate(name, found)
-                reason = (
-                    None
-                    if candidate
-                    else (
+                reason, note = None, None
+                if not candidate and (
+                    second := corroborated_candidate(client, name, found, text)
+                ):
+                    candidate, basis = second
+                    reason = "BAG_CORROBORATED_" + basis
+                    note = identity_note(raw, candidate, basis)
+                if not candidate:
+                    reason = (
                         "SEARCH_FAILED" if found.get("errors") else "IDENTITY_UNCERTAIN"
                     )
-                )
                 if not candidate and any(
                     c.get("permit_status") != "정상" for c in found["candidates"]
                 ):
                     reason = "INACTIVE_OR_UNCERTAIN_PRODUCT"
-                matches.append(
-                    {
-                        "recognized_name": raw,
-                        "match_status": "MATCHED"
-                        if candidate
-                        else ("AMBIGUOUS" if found["candidates"] else "UNMATCHED"),
-                        "item_seq": candidate["item_seq"] if candidate else None,
-                        "item_name": candidate["official_name"] if candidate else None,
-                        "review_reason": reason,
-                        "candidates": [
-                            candidate_details(name, c) for c in found["candidates"]
-                        ],
-                    }
-                )
-                if candidate:
-                    selected.append(candidate["item_seq"])
+                return {
+                    "recognized_name": raw,
+                    "match_status": "MATCHED"
+                    if candidate
+                    else ("AMBIGUOUS" if found["candidates"] else "UNMATCHED"),
+                    "item_seq": candidate["item_seq"] if candidate else None,
+                    "item_name": candidate["official_name"] if candidate else None,
+                    "review_reason": reason,
+                    "identity_note": note,
+                    "candidates": [
+                        candidate_details(name, c) for c in found["candidates"]
+                    ],
+                }
+
+            # Lookups are independent; 4 workers stay well inside MFDS rate limits.
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                matches = list(pool.map(lookup, extraction["candidates"]))
+            selected = [
+                m["item_seq"] for m in matches if m["match_status"] == "MATCHED"
+            ]
             if not selected:
                 return MedicationScanResult(
                     recognized_text=text,

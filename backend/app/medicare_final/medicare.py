@@ -46,6 +46,8 @@ def generate_medication_answer(
         client=mfds_client,
         max_context_chars=max_context_chars,
     )
+    result["cached_evidence"] = context.get("cached_evidence", [])
+    result["cache_conflicts"] = context.get("cache_conflicts", [])
     result["confirmed_drugs"] = [
         {"item_seq": p["item_seq"], "drug_name": p["drug_name"]}
         for p in context.get("products", [])
@@ -57,6 +59,10 @@ def generate_medication_answer(
     # 공식 정보는 LLM 전달 여부와 별도로 출처를 제공한다.
     result["sources"] = dict(result["sources"])
     for item in result["official_precautions"]:
+        origin = result["sources"].get(item.get("source_id"), {})
+        if origin:
+            item["retrieved_at"] = origin.get("retrieved_at")
+            item["cache_status"] = origin.get("cache_status", "live")
         if item.get("source_id") and item.get("url"):
             result["sources"].setdefault(
                 item["source_id"],

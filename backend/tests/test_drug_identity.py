@@ -1,4 +1,4 @@
-from app.medicare.drug_search import normalize
+from app.medicare_final.drug_search import normalize
 from app.services.drug_identity import ranked_suggestions, select_candidate
 
 

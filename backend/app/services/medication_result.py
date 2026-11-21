@@ -47,6 +47,9 @@ def partition_result(matches, result):
                 ],
             }
         identified[seq]["recognized_names"].append(match["recognized_name"])
+        identified[seq].setdefault("identity_note", match.get("identity_note"))
+        if not identified[seq]["identity_note"]:
+            identified[seq]["identity_note"] = match.get("identity_note")
     values = list(identified.values())
     return {
         "identified_count": len(values),

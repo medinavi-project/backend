@@ -28,8 +28,11 @@ async def test_live_gemini_connection():
                     )
                 ],
                 symptoms=Symptoms(),
+                answered_fields=[],
+                turn_count=1,
+                max_turns=5,
             )
         )
-        assert output.next_question
+        assert output.action in {"ASK_FOLLOW_UP", "COMPLETE"}
     finally:
         await provider.close()

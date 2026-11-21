@@ -1,0 +1,216 @@
+{
+  "$defs": {
+    "AnalysisDisease": {
+      "additionalProperties": false,
+      "properties": {
+        "disease_name": {
+          "minLength": 1,
+          "title": "Disease Name",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "disease_name",
+        "reason"
+      ],
+      "title": "AnalysisDisease",
+      "type": "object"
+    },
+    "AnalysisOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "assessment_status": {
+          "enum": [
+            "PRELIMINARY",
+            "INSUFFICIENT_INFORMATION",
+            "INSUFFICIENT_EVIDENCE"
+          ],
+          "title": "Assessment Status",
+          "type": "string"
+        },
+        "symptom_summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Symptom Summary",
+          "type": "string"
+        },
+        "suspected_diseases": {
+          "items": {
+            "$ref": "#/$defs/AnalysisDisease"
+          },
+          "maxItems": 3,
+          "title": "Suspected Diseases",
+          "type": "array"
+        },
+        "recommended_department": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recommended Department"
+        }
+      },
+      "required": [
+        "assessment_status",
+        "symptom_summary",
+        "suspected_diseases",
+        "recommended_department"
+      ],
+      "title": "AnalysisOutput",
+      "type": "object"
+    },
+    "SymptomUpdates": {
+      "additionalProperties": false,
+      "properties": {
+        "main_symptom": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Main Symptom"
+        },
+        "body_location": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body Location"
+        },
+        "onset": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Onset"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
+        },
+        "additional_symptoms": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Additional Symptoms",
+          "type": "array"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        }
+      },
+      "title": "SymptomUpdates",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "enum": [
+        "ASK_FOLLOW_UP",
+        "COMPLETE"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "symptom_updates": {
+      "$ref": "#/$defs/SymptomUpdates"
+    },
+    "answered_fields": {
+      "items": {
+        "enum": [
+          "main_symptom",
+          "body_location",
+          "onset",
+          "severity",
+          "additional_symptoms",
+          "region"
+        ],
+        "type": "string"
+      },
+      "title": "Answered Fields",
+      "type": "array"
+    },
+    "next_question": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Question"
+    },
+    "analysis": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnalysisOutput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "symptom_updates",
+    "answered_fields",
+    "next_question",
+    "analysis"
+  ],
+  "title": "ChatOutput",
+  "type": "object"
+}

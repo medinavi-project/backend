@@ -1,9 +1,11 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from app.core.exceptions import BusinessException
 from app.core.response_codes import Code
-from app.schemas.ai import ChatInput
+from app.schemas.ai import ChatInput, ChatOutput
 from app.schemas.chat import (
     CreateResponse,
     Message,
@@ -26,33 +28,40 @@ class ChatService:
 
     async def apply_turn(self, session, message):
         messages = session.messages + [Message(role="user", content=message)]
-        output = await self.provider.process_chat(
-            ChatInput(messages=messages, symptoms=session.symptoms)
+        request = ChatInput(
+            messages=messages,
+            symptoms=session.symptoms,
+            answered_fields=sorted(session.answered_fields),
+            turn_count=session.turn_count + 1,
+            max_turns=self.settings.MAX_CHAT_TURNS,
         )
-        updates = output.symptom_updates.model_dump()
-        for field in output.answered_fields:
-            value = updates[field]
+        output = await self.provider.process_chat(request)
+        # Enforce the same contract for every provider, including external adapters.
+        try:
+            output = ChatOutput.model_validate(
+                output.model_dump(exclude_unset=True),
+                context=request.model_dump(),
+            )
+        except ValidationError:
+            raise BusinessException(Code.AI_RESPONSE_INVALID) from None
+        for field, value in output.symptom_updates.model_dump(
+            exclude_unset=True
+        ).items():
             if value is not None:
                 setattr(session.symptoms, field, value)
-                session.answered_fields.add(field)
-        session.messages = messages + [
-            Message(role="assistant", content=output.next_question)
-        ]
-        session.turn_count += 1
+        session.answered_fields.update(output.answered_fields)
+        session.messages = messages
+        session.turn_count = request.turn_count
         session.updated_at = datetime.now(UTC)
-        required = {
-            "main_symptom",
-            "body_location",
-            "onset",
-            "severity",
-            "additional_symptoms",
-        }
-        # AI triage and diagnostic algorithms are deliberately outside this prototype.
-        finish = (
-            required <= session.answered_fields
-            or session.turn_count >= self.settings.MAX_CHAT_TURNS
-        )
-        return output.next_question, finish
+        if output.action == "COMPLETE":
+            session.result = self.analysis.result(session, output.analysis)
+            session.status = Status.COMPLETED
+        else:
+            session.status = Status.IN_PROGRESS
+            session.messages.append(
+                Message(role="assistant", content=output.next_question)
+            )
+        return output.next_question
 
     def response(self, session, question):
         return MessageResponse(
@@ -64,33 +73,10 @@ class ChatService:
             result_available=session.result is not None,
         )
 
-    async def finish(self, session, token=None):
-        session.status = Status.ANALYZING
-        if token:
-            await self.repository.save(session, token)
-        try:
-            session.result = await self.analysis.analyze(session)
-            session.status = Status.COMPLETED
-        except BusinessException as exc:
-            session.status, session.failure_code = Status.FAILED, exc.code
-            if token:
-                await self.repository.save(session, token)
-            raise
-        except Exception:  # noqa: BLE001 - persist terminal failure before returning safe error
-            session.status, session.failure_code = (
-                Status.FAILED,
-                Code.AI_ANALYSIS_FAILED,
-            )
-            if token:
-                await self.repository.save(session, token)
-            raise BusinessException(Code.AI_ANALYSIS_FAILED) from None
-
     async def create(self, request):
         now = datetime.now(UTC)
         session = Session(session_id=uuid4(), created_at=now, updated_at=now)
-        question, finish = await self.apply_turn(session, request.initial_message)
-        if finish:
-            await self.finish(session)
+        question = await self.apply_turn(session, request.initial_message)
         session.updated_at = datetime.now(UTC)
         await self.repository.create(session)
         return CreateResponse(
@@ -116,9 +102,21 @@ class ChatService:
                     Status.ANALYZING: Code.SESSION_ANALYSIS_IN_PROGRESS,
                 }.get(session.status, Code.SESSION_NOT_ACTIVE)
                 raise BusinessException(code)
-            question, finish = await self.apply_turn(session, request.message)
-            if finish:
-                await self.finish(session, token)
+            session.status = Status.ANALYZING
+            await self.repository.save(session, token)
+            try:
+                question = await self.apply_turn(session, request.message)
+            except BusinessException as exc:
+                session.status, session.failure_code = Status.FAILED, exc.code
+                await self.repository.save(session, token)
+                raise
+            except Exception:  # noqa: BLE001 - persist safe failure before returning
+                session.status, session.failure_code = (
+                    Status.FAILED,
+                    Code.AI_REQUEST_FAILED,
+                )
+                await self.repository.save(session, token)
+                raise BusinessException(Code.AI_REQUEST_FAILED) from None
             response = self.response(session, question)
             session.receipts[message_id] = Receipt(
                 message=request.message, response=response

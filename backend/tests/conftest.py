@@ -57,6 +57,7 @@ def settings(redis_url):
     return Settings(
         _env_file=None,
         APP_ENV="test",
+        MEDICATION_AI_ENABLED=False,
         AI_PROVIDER="mock",
         AI_MOCK_ENABLED=True,
         REDIS_URL=redis_url,

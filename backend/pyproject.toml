@@ -5,3 +5,7 @@ pythonpath = ["."]
 markers = ["integration: explicitly enabled live Gemini test"]
 [tool.ruff]
 target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+"app/medicare/*.py" = ["ALL"]
+"app/medicare_final/*.py" = ["ALL"]

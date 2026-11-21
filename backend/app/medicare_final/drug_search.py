@@ -2,9 +2,15 @@
 
 import re
 import unicodedata
+import json
+import os
+from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from decimal import Decimal, InvalidOperation
 
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
+from rapidfuzz.distance import Levenshtein
 from .mfds_api import MFDSError
 
 UNIT = r"(?:밀리그램|밀리그람|mg|마이크로그램|마이크로그람|mcg|μg|ug|그램|그람|g|밀리리터|ml|%)"
@@ -62,6 +68,185 @@ def form(value):
     return matches[-1] if matches and stem.endswith(matches[-1]) else None
 
 
+@lru_cache(maxsize=None)
+def _name_stem(value):
+    main = re.split(r"[（(]", value or "", maxsplit=1)[0]
+    main = re.sub(r"\d.*$", "", main)
+    return re.sub(
+        r"(?:서방정|츄어블정|필름코팅정|장용정|캡슐|카플렛|과립|시럽|현탁액|주사액|점안액|연고|크림|패치|정|산|액|고)$",
+        "",
+        normalize(main),
+    )
+
+
+@lru_cache(maxsize=4)
+def _read_json(path, mtime):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _load(path):
+    # Cached per file version; a re-export changes mtime and reloads.
+    return _read_json(str(path), path.stat().st_mtime)
+
+
+def _load_rows(path, default):
+    """Merged dictionary rows; None when unavailable."""
+    result = {}
+    try:
+        data = _load(path)
+        rows = data["items"]
+        if not isinstance(rows, list):
+            return None, {}
+        if default:
+            collected = (
+                Path(__file__).parent
+                / "data"
+                / "mfds_collection"
+                / "drug_name_dictionary.json"
+            )
+            try:
+                snapshot = _load(collected)
+                extra = snapshot.get("items", [])
+                if isinstance(extra, list):
+                    result["collected_coverage"] = snapshot.get("coverage", {})
+                    # Separate optional limit for search hints; these never prove identity.
+                    age_limit = os.getenv("MFDS_DICTIONARY_MAX_AGE_HOURS")
+                    if age_limit:
+                        try:
+                            seconds = float(age_limit) * 3600
+                            if not 0 <= seconds <= 87600 * 3600:
+                                raise ValueError()
+
+                            def recent(row):
+                                try:
+                                    stamp = datetime.fromisoformat(row["retrieved_at"])
+                                    if stamp.tzinfo is None:
+                                        return False
+                                    age = (
+                                        datetime.now(timezone.utc)
+                                        - stamp.astimezone(timezone.utc)
+                                    ).total_seconds()
+                                    return 0 <= age <= seconds
+                                except (KeyError, TypeError, ValueError):
+                                    return False
+
+                            extra = [
+                                row
+                                for row in extra
+                                if isinstance(row, dict) and recent(row)
+                            ]
+                        except ValueError:
+                            extra = []
+                    by_seq = {
+                        str(row.get("item_seq")): row
+                        for row in rows
+                        if isinstance(row, dict)
+                    }
+                    by_seq.update(
+                        {
+                            str(row.get("item_seq")): row
+                            for row in extra
+                            if isinstance(row, dict)
+                        }
+                    )
+                    rows = list(by_seq.values())
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, {}
+    return rows, result.get("collected_coverage", {})
+
+
+@lru_cache(maxsize=4)
+def _index(path, default, _versions):
+    # ponytail: age filter is evaluated once per file version, not per call.
+    rows, coverage = _load_rows(Path(path), default)
+    if rows is None:
+        return None
+    rows = [
+        r
+        for r in rows
+        if isinstance(r, dict)
+        and re.fullmatch(r"\d{9}", str(r.get("item_seq", "")))
+        and isinstance(r.get("official_name"), str)
+    ]
+    return rows, [_name_stem(r["official_name"]) for r in rows], coverage
+
+
+def find_local_candidates(query, *, limit=5, dictionary_path=None):
+    """저장된 부분 표본에서만 후보를 찾는다. 현재 허가나 품목 확정은 하지 않는다."""
+    path = (
+        Path(dictionary_path)
+        if dictionary_path is not None
+        else Path(__file__).parent / "data" / "drug_name_dictionary.json"
+    )
+    result = {
+        "status": "dictionary_unavailable",
+        "coverage": "partial",
+        "candidates": [],
+        "truncated": False,
+    }
+    default = dictionary_path is None
+    collected = (
+        Path(__file__).parent / "data" / "mfds_collection" / "drug_name_dictionary.json"
+    )
+    versions = tuple(
+        f.stat().st_mtime if f.exists() else None for f in (path, collected)
+    ) + (os.getenv("MFDS_DICTIONARY_MAX_AGE_HOURS"),)
+    index = _index(str(path), default, versions)
+    if index is None:
+        return result
+    rows, stems, coverage = index
+    if default:
+        result["collected_coverage"] = coverage
+    stem = _name_stem(query)
+    if len(stem) < 2:
+        result["status"] = "query_too_short"
+        return result
+    qstrength, qform = strengths(query), form(query)
+    found = []
+    # C-level prefilter; 66 is the lowest ratio a one-edit match of length 3 can have.
+    hits = process.extract(stem, stems, scorer=fuzz.ratio, score_cutoff=66, limit=None)
+    for _, _, i in hits:
+        row, other = rows[i], stems[i]
+        name = row["official_name"]
+        score = round(fuzz.ratio(stem, other), 1)
+        # 짧은 이름은 한 글자 차이도 영향이 커 자동 유사 매칭을 보수적으로 제한한다.
+        one_edit = (
+            min(len(stem), len(other)) >= 3 and Levenshtein.distance(stem, other) <= 1
+        )
+        if not other or (
+            not one_edit and score < (90 if min(len(stem), len(other)) < 3 else 80)
+        ):
+            continue
+        sm = compare_display_strengths(qstrength, strengths(name))
+        fm = None if not qform or not form(name) else qform == form(name)
+        found.append(
+            {
+                **row,
+                "similarity": score,
+                "strength_match": sm,
+                "form_match": fm,
+                "identity_status": "confirmation_required",
+                "current_official_verified": False,
+            }
+        )
+    found.sort(
+        key=lambda x: (
+            x["strength_match"] is False,
+            x["form_match"] is False,
+            -x["similarity"],
+            x["item_seq"],
+        )
+    )
+    result.update(
+        status="candidates_found" if found else "no_match_in_partial_dictionary",
+        candidates=found[:limit],
+        truncated=len(found) > limit,
+    )
+    return result
+
+
 def query_variants(value):
     original = unicodedata.normalize("NFKC", value).strip()
     cleaned = re.sub(r"[^0-9a-zA-Z가-힣/%.]", "", original)
@@ -84,6 +269,20 @@ def query_variants(value):
 def search_drug(client, query, *, max_pages=2, page_size=50, max_candidates=20):
     if not query or not query.strip() or not normalize(query):
         raise ValueError("검색할 의약품명을 입력하세요.")
+    if len(normalize(query)) < 2:
+        return {
+            "query": query,
+            "status": "query_too_short",
+            "message": "두 글자 이상 확인이 필요합니다.",
+            "input_strength": [],
+            "input_form": None,
+            "candidate_count": 0,
+            "truncated": False,
+            "attempts": [],
+            "errors": [],
+            "candidates": [],
+            "local_dictionary": find_local_candidates(query),
+        }
     input_strength = strengths(query)
     input_form = form(query)
     seen, attempts, errors, truncated = {}, [], [], False
@@ -122,6 +321,28 @@ def search_drug(client, query, *, max_pages=2, page_size=50, max_candidates=20):
                 {"query": term, "status": exc.category, "total_count": None}
             )
             break
+    local = find_local_candidates(query, limit=3)
+    truncated |= local["truncated"]
+    # 사전은 오래됐을 수 있으므로 최대 3개 코드만 현행 API로 재확인한다.
+    if not errors:
+        for hint in local["candidates"]:
+            if hint["item_seq"] in seen:
+                continue
+            try:
+                for page in client.pages(
+                    client.permit_list,
+                    item_seq=hint["item_seq"],
+                    page_size=10,
+                    max_pages=1,
+                ):
+                    for item in page.items:
+                        if str(item.get("ITEM_SEQ", "")).strip() == hint[
+                            "item_seq"
+                        ] and item.get("ITEM_NAME"):
+                            seen.setdefault(hint["item_seq"], item)
+            except MFDSError as exc:
+                errors.append({"category": exc.category, "code": exc.code})
+                break
     candidates = []
     for seq, item in seen.items():
         name = item["ITEM_NAME"]
@@ -174,4 +395,5 @@ def search_drug(client, query, *, max_pages=2, page_size=50, max_candidates=20):
         "attempts": attempts,
         "errors": errors,
         "candidates": candidates[:max_candidates],
+        "local_dictionary": local,
     }

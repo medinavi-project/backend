@@ -65,6 +65,8 @@ class ScanGuideResponse(ScanGuidance):
 
 class IdentifiedMedicationDTO(BaseModel):
     display_precautions: str | None = None
+    # Plain-language rewrite of the official effects (AI, guarded; not AI_VALIDATED).
+    display_purpose: str | None = None
     item_seq: str
     item_name: str
     recognized_names: list[str]
@@ -72,6 +74,8 @@ class IdentifiedMedicationDTO(BaseModel):
     summary_status: str
     official_info: dict | None = None
     precautions: list[dict] = []
+    # Set when identity came from the bag-corroborated rule (typo or inactive).
+    identity_note: str | None = None
 
 
 class MedicationScanResult(BaseModel):
@@ -119,6 +123,8 @@ class MedicationCard(BaseModel):
     name: str
     description: MedicationDescription
     guidance_status: Literal["AVAILABLE", "PARTIAL", "UNAVAILABLE"]
+    # User-facing caution: auto-matched from an OCR typo, or permit not active.
+    warning: str | None = None
 
 
 class UncertainMedicationCard(BaseModel):

@@ -9,7 +9,7 @@ class DrugSearchProvider(Protocol):
 
 class OfficialTextSearch:
     def search(self, client, query):
-        from app.medicare.drug_search import search_drug
+        from app.medicare_final.drug_search import search_drug
 
         return search_with_similarity(client, query, search_drug)
 

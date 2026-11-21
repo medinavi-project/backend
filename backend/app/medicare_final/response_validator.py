@@ -44,6 +44,76 @@ CLAIM_FIELDS = {
     "storage": "storage",
 }
 
+# 대응은 해당 공식 문서가 괄호 안에 직접 제공한 표현에 한정한다. 일반 동의어 사전이 아니다.
+MEDICAL_TERM_CORRESPONDENCES = (
+    {
+        "official_term": "동통",
+        "plain_candidate": "통증",
+        "source": "식약처 효능 원문 자체의 괄호 병기",
+        "context": "공식 원문에 동통(통증)이 그대로 존재",
+        "review_status": "source_explicit_developer_review",
+        "reviewer_type": "developer",
+        "medication_scope": "해당 괄호 병기를 포함하는 식약처 효능 문서",
+        "medical_expert_review": "not_performed",
+    },
+    {
+        "official_term": "염좌통",
+        "plain_candidate": "삔 통증",
+        "source": "식약처 효능 원문 자체의 괄호 병기",
+        "context": "공식 원문에 염좌통(삔 통증)이 그대로 존재",
+        "review_status": "source_explicit_developer_review",
+        "reviewer_type": "developer",
+        "medication_scope": "해당 괄호 병기를 포함하는 식약처 효능 문서",
+        "medical_expert_review": "not_performed",
+    },
+)
+
+
+def validate_source_defined_terms(text, source_text):
+    """원문의 명시적 괄호 병기만 치환하고 나머지 문서 전체가 그대로인 경우만 확인."""
+    transformed = source_text
+    applied = []
+    for entry in MEDICAL_TERM_CORRESPONDENCES:
+        literal = entry["official_term"] + "(" + entry["plain_candidate"] + ")"
+        if literal in transformed:
+            transformed = transformed.replace(literal, entry["plain_candidate"])
+            applied.append(entry)
+    if applied and text.strip() == transformed.strip():
+        return {
+            "method": "source_defined_parentheticals",
+            "applied_terms": applied,
+            "medical_expert_review": "not_performed",
+            "scope": "공식 문서의 명시적 괄호만 치환하며 그 외 내용은 전부 동일",
+        }
+    return None
+
+
+def effect_claim_diagnostics(text, source_texts):
+    """불확실성 단서를 표시한다. 단어 탐지는 완전한 의학적 의미 판별이 아니다."""
+    codes = [
+        "wording_differs_from_source",
+        "medical_equivalence_unverified",
+        "support_or_omission_unverified",
+        "additional_effect_unverified",
+    ]
+    source = " ".join(source_texts)
+    nums = set(re.findall(r"\d+(?:[.,/]\d+)*", text))
+    source_nums = set(re.findall(r"\d+(?:[.,/]\d+)*", source))
+    if nums - source_nums:
+        codes.append("number_or_condition_not_in_source")
+    if re.search(r"복용|투여|\d\s*(?:회|세|일|개월|시간|mg|mcg|밀리그램)", text, re.I):
+        codes.append("possible_dose_or_condition_claim")
+    if re.search(r"완치|치료|예방", text):
+        codes.append("disease_treatment_or_cure_unverified")
+    return {
+        "reason_codes": codes,
+        "evidence": {
+            "cited_sources_checked": len(source_texts),
+            "unmatched_numbers": sorted(nums - source_nums),
+            "note": "표현 차이 및 일부 위험 단서만 확인했으며 추가 효능·누락·의학적 동등성은 자동 판정하지 못함",
+        },
+    }
+
 
 def controlled_effect_rephrase(item_seq, text, source_text):
     """기존 V2 규칙 중 공식 문서 전체와 동일하게 확인된 직접적 효능 표현만 허용한다."""

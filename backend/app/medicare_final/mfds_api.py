@@ -2,6 +2,7 @@
 
 import json
 import os
+import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -9,7 +10,6 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import requests
-from dotenv import load_dotenv
 
 BASE = "https://apis.data.go.kr/1471000/"
 EASY = "DrbEasyDrugInfoService/getDrbEasyDrugList"
@@ -30,9 +30,43 @@ AUTH_CODES = {"10", "11", "12", "20", "21", "22", "30", "31", "32", "33"}
 
 
 class MFDSError(Exception):
-    def __init__(self, category, message, code=None):
+    def __init__(self, category, message, code=None, *, detail=None, stage=None):
         super().__init__(message)
         self.category, self.code = category, code
+        self.detail, self.stage = detail, stage
+
+
+def _network_detail(exc):
+    """Classify exception types only; never expose URL, proxy credentials or keys."""
+    if isinstance(exc, requests.exceptions.ProxyError):
+        return "proxy_error"
+    if isinstance(exc, requests.exceptions.SSLError):
+        return "tls_error"
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "timeout"
+    pending, seen = [exc], set()
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if type(node).__name__ in ("NameResolutionError", "gaierror"):
+            return "dns_error"
+        pending.extend(
+            x
+            for x in (
+                getattr(node, "__cause__", None),
+                getattr(node, "__context__", None),
+                *getattr(node, "args", ()),
+                getattr(node, "reason", None),
+            )
+            if isinstance(x, BaseException)
+        )
+    return (
+        "connection_error"
+        if isinstance(exc, requests.exceptions.ConnectionError)
+        else "unknown_error"
+    )
 
 
 @dataclass
@@ -71,8 +105,11 @@ class MFDSClient:
             interval,
         )
         self.calls = 0
+        self.request_diagnostics = []
         self.session = session or requests.Session()
         self.last_call = 0.0
+        # Budget and pacing are shared when lookups run in threads.
+        self._lock = threading.Lock()
 
     def _request(self, path, params, page, page_size):
         if not 1 <= page or not 1 <= page_size <= 100:
@@ -85,32 +122,63 @@ class MFDSClient:
             **params,
         }
         for attempt in range(self.retries + 1):
-            if self.calls >= self.max_calls:
-                raise MFDSError(
-                    "budget_exceeded", "이 클라이언트의 호출 예산을 소진했습니다."
-                )
-            time.sleep(max(0, self.interval - (time.monotonic() - self.last_call)))
-            self.calls += 1
-            self.last_call = time.monotonic()
+            with self._lock:
+                if self.calls >= self.max_calls:
+                    raise MFDSError(
+                        "budget_exceeded", "이 클라이언트의 호출 예산을 소진했습니다."
+                    )
+                time.sleep(max(0, self.interval - (time.monotonic() - self.last_call)))
+                self.calls += 1
+                self.last_call = time.monotonic()
+            started = time.monotonic()
             try:
                 response = self.session.get(
                     BASE + path, params=query, timeout=self.timeout
                 )
-            except requests.RequestException:
+            except requests.RequestException as exc:
+                detail = _network_detail(exc)
+                self.request_diagnostics.append(
+                    {
+                        "stage": "transport",
+                        "detail": detail,
+                        "exception_type": type(exc).__name__,
+                        "elapsed_seconds": round(time.monotonic() - started, 3),
+                    }
+                )
                 if attempt < self.retries:
                     time.sleep(0.5 * (2**attempt))
                     continue
                 raise MFDSError(
-                    "network", "식약처 API 네트워크 요청에 실패했습니다."
+                    "network",
+                    "식약처 API 네트워크 요청에 실패했습니다.",
+                    detail=detail,
+                    stage="transport",
                 ) from None
+            self.request_diagnostics.append(
+                {
+                    "stage": "http",
+                    "http_status": response.status_code,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                }
+            )
             if response.status_code in (401, 403):
                 raise MFDSError(
                     "authentication",
                     "API 인증 또는 이용 권한을 확인하세요.",
                     str(response.status_code),
+                    detail="authentication_error"
+                    if response.status_code == 401
+                    else "permission_error",
+                    stage="http",
                 )
             if response.status_code == 429:
-                raise MFDSError("quota", "API 호출 제한 응답을 받았습니다.", "429")
+                raise MFDSError(
+                    "quota",
+                    "API 호출 제한 응답을 받았습니다.",
+                    "429",
+                    detail="rate_limit",
+                    stage="http",
+                )
             if response.status_code >= 500 and attempt < self.retries:
                 time.sleep(0.5 * (2**attempt))
                 continue
@@ -134,16 +202,36 @@ class MFDSClient:
                 code = root.findtext(".//returnReasonCode") or root.findtext(
                     ".//resultCode"
                 )
-                if code:
+                if code and code not in ("00", "0"):
                     category = (
                         "quota"
                         if code == "22"
                         else ("authentication" if code in AUTH_CODES else "api")
                     )
-                    raise MFDSError(category, "공공데이터 API 오류 응답입니다.", code)
+                    raise MFDSError(category, "????? API ?? ?????.", code)
+                if code:
+                    body = root.find(".//body")
+                    if body is None:
+                        raise MFDSError("api", "API ?? ??? ???? ????.")
+                    rows = [
+                        {child.tag: child.text or "" for child in item}
+                        for item in body.findall(".//items/item")
+                    ]
+                    try:
+                        total = int(body.findtext("totalCount") or len(rows))
+                    except ValueError:
+                        raise MFDSError("api", "API ?? ??? ???? ????.") from None
+                    if total > 0 and not rows and page == 1:
+                        raise MFDSError("api", "API ?? ??? ?? ??? ???? ????.")
+                    return Page(rows, total, page, page_size, code)
             except ET.ParseError:
                 pass
-            raise MFDSError("api", "API 응답을 JSON으로 해석할 수 없습니다.")
+            raise MFDSError(
+                "api",
+                "API 응답을 JSON/XML로 해석할 수 없습니다.",
+                detail="parse_error",
+                stage="parsing",
+            )
         if not isinstance(data, dict):
             raise MFDSError("api", "API 응답 형식이 올바르지 않습니다.")
         data = data.get("response", data)

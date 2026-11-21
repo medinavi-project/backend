@@ -22,7 +22,9 @@ def present_scan(result):
     for item in result.identified_medications:
         info = item.official_info or {}
         description = MedicationDescription(
-            purpose=text_of(item.summary) or text_of(info.get("effects")),
+            purpose=item.display_purpose
+            or text_of(item.summary)
+            or text_of(info.get("effects")),
             how_to_take=text_of(info.get("dosage")),
             precautions=item.display_precautions or text_of(item.precautions),
             side_effects=text_of(info.get("side_effects")),
@@ -37,12 +39,13 @@ def present_scan(result):
                 guidance_status="AVAILABLE"
                 if all(values)
                 else ("PARTIAL" if any(values) else "UNAVAILABLE"),
+                warning=item.identity_note,
             )
         )
     reasons = {
         "PRIVACY_REVIEW_REQUIRED": "문장에 섞인 내용을 약품명으로 확인하기 어렵습니다.",
         "SEARCH_FAILED": "약품 정보를 조회하지 못했습니다.",
-        "INACTIVE_OR_UNCERTAIN_PRODUCT": "정상 허가 품목으로 확정하기 어렵습니다.",
+        "INACTIVE_OR_UNCERTAIN_PRODUCT": "허가가 취소·만료된 약이거나 이름이 비슷한 다른 약일 수 있어 정확히 확인하지 못했습니다.",
         "IDENTITY_UNCERTAIN": "정확한 제품명이나 함량을 확인하기 어렵습니다.",
     }
     uncertain = [

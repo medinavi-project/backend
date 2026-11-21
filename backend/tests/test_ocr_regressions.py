@@ -74,3 +74,38 @@ def test_exact_query_still_rejects_incomplete_search():
 
     found = {"errors": [], "truncated": True, "candidates": []}
     assert resolve_exact_scope(Client(), "가상정", found) == found
+
+
+def test_bag_line_formats_keep_name_drop_dosing_columns():
+    lines = {
+        "가상정500mg 1 3 3": "가상정500mg",
+        "1. 가상정500mg": "가상정500mg",
+        "가상 정 500mg": "가상 정 500mg",
+        "가상정5/50밀리그램": "가상정5/50밀리그램",
+        "[1]다른약정 1정 3회 3일": "다른약정",
+        "가상정500mg(성분명)": "가상정500mg",
+    }
+    for line, expected in lines.items():
+        found = extract_candidates(line)["candidates"]
+        assert [r["raw_text"] for r in found] == [expected], line
+    assert extract_candidates("가상 정 500mg")["candidates"][0]["search_name"] == (
+        "가상정500mg"
+    )
+
+
+def test_identity_words_on_line_are_flagged_not_dropped():
+    found = extract_candidates("1. 가상정5mg 처방 1일 3회")["candidates"]
+    assert found[0]["raw_text"] == "가상정5mg"
+    assert found[0]["identity_words_on_line"] is True
+
+
+def test_dictionary_noise_and_generic_words_are_not_candidates():
+    from app.services.ocr_candidate_adapter import extract_candidates
+
+    text = (
+        "해열제 시럽은 라벨에 적힌 대로 드시고 임의로 늘리지 마세요\n"
+        "해열제 시럽\n"
+        "세프로바이정250밀리그램 1정\n"
+    )
+    names = [c["raw_text"] for c in extract_candidates(text)["candidates"]]
+    assert names == ["세프로바이정250밀리그램"]

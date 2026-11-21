@@ -1,28 +1,23 @@
 from fastapi import APIRouter, Request, UploadFile
 
 from app.core.response import ApiResponse
-from app.schemas.chat import MedicationRequest
-from app.schemas.medications import GuideResponse, ScanResponse
+from app.schemas.medications import MedicationScanResponse
+from app.services.medication_presentation import present_scan
 
 router = APIRouter(prefix="/api/v1/medications", tags=["의약품"])
 
 
 @router.post(
     "/scan",
-    response_model=ApiResponse[ScanResponse],
-    description="OCR 미구현: 유효한 업로드 요청에는 503 OCR_SERVICE_UNAVAILABLE을 반환합니다.",
+    response_model=ApiResponse[MedicationScanResponse],
+    description="이미지 → OCR → 약품 식별 → 식약처 근거 조회 → CLOVA 안내를 한 요청으로 처리합니다.",
 )
 async def scan(file: UploadFile, request: Request):
     try:
-        return await request.app.state.ocr.scan(file)
+        return ApiResponse(
+            code="SUCCESS",
+            message="의약품 이미지 처리가 완료되었습니다.",
+            data=present_scan(await request.app.state.ocr.scan(file)),
+        )
     finally:
         await file.close()
-
-
-@router.post("/guide", response_model=ApiResponse[GuideResponse])
-async def guide(body: MedicationRequest, request: Request):
-    return ApiResponse(
-        code="SUCCESS",
-        message="시연용 복약 안내가 생성되었습니다.",
-        data=await request.app.state.medications.guide(body),
-    )

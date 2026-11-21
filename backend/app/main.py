@@ -16,7 +16,6 @@ from app.services.analysis_service import AnalysisService
 from app.services.chat_service import ChatService
 from app.services.data_providers import DemoDataProvider
 from app.services.hospital_service import HospitalService
-from app.services.medication_service import MedicationService
 from app.services.ocr_service import OCRService
 
 
@@ -51,8 +50,7 @@ def create_app(settings=None, provider=None):
             settings,
         )
         app.state.hospitals = HospitalService(data)
-        app.state.medications = MedicationService(data, ai)
-        app.state.ocr = OCRService()
+        app.state.ocr = OCRService(settings, ai)
         try:
             yield
         finally:

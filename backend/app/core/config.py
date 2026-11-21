@@ -22,7 +22,16 @@ class Settings(BaseSettings):
     AI_MOCK_ENABLED: bool = False
     HOSPITAL_DATA_PROVIDER: str = "demo"
     MEDICATION_DATA_PROVIDER: str = "demo"
+    MFDS_API_KEY: SecretStr = SecretStr("")
+    CLOVA_API_KEY: SecretStr = SecretStr("")
+    CLOVA_MODEL: str = "HCX-005"
+    MEDICATION_AI_ENABLED: bool = True
     OCR_PROVIDER: str = "disabled"
+    CLOVA_OCR_INVOKE_URL: str = ""
+    CLOVA_OCR_SECRET: SecretStr = SecretStr("")
+    OCR_REQUEST_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=120)
+    OCR_API_URL: str = ""
+    OCR_API_TOKEN: SecretStr = SecretStr("")
     TTS_PROVIDER: str = "disabled"
     CORS_ORIGINS: str = "http://localhost:8501"
 
@@ -34,8 +43,19 @@ class Settings(BaseSettings):
             not self.AI_MOCK_ENABLED or self.APP_ENV not in {"development", "test"}
         ):
             raise ValueError("Mock requires AI_MOCK_ENABLED=true and development/test")
-        if self.OCR_PROVIDER != "disabled" or self.TTS_PROVIDER != "disabled":
+        if (
+            self.OCR_PROVIDER not in {"disabled", "http", "mock", "clova"}
+            or self.TTS_PROVIDER != "disabled"
+        ):
             raise ValueError("OCR and TTS are not implemented; use disabled")
+        if self.OCR_PROVIDER == "http" and not self.OCR_API_URL.startswith(
+            ("http://", "https://")
+        ):
+            raise ValueError("OCR_API_URL is required")
+        if self.OCR_PROVIDER == "mock" and (
+            self.APP_ENV not in {"development", "test"} or not self.AI_MOCK_ENABLED
+        ):
+            raise ValueError("OCR mock requires explicit development/test mock mode")
         if (
             self.HOSPITAL_DATA_PROVIDER != "demo"
             or self.MEDICATION_DATA_PROVIDER != "demo"

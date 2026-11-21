@@ -32,6 +32,9 @@ def request():
             Message(role="user", content="추가 입력"),
         ],
         symptoms=Symptoms(onset="어제"),
+        answered_fields=["onset"],
+        turn_count=2,
+        max_turns=5,
     )
 
 
@@ -39,6 +42,8 @@ async def test_gemini_structured_context(gemini):
     import json
 
     raw = {
+        "action": "ASK_FOLLOW_UP",
+        "analysis": None,
         "symptom_updates": {},
         "answered_fields": [],
         "next_question": "추가 설명 부탁드립니다.",
@@ -135,7 +140,13 @@ async def test_wire_schema_omits_unsupported_extra_properties(gemini):
     assert ChatOutput.model_config["extra"] == "forbid"
     gemini.client.aio.models.generate_content.return_value = SimpleNamespace(
         text=json.dumps(
-            {"symptom_updates": {}, "answered_fields": [], "next_question": "질문"}
+            {
+                "action": "ASK_FOLLOW_UP",
+                "symptom_updates": {},
+                "answered_fields": [],
+                "next_question": "질문",
+                "analysis": None,
+            }
         )
     )
     await gemini.process_chat(request())
@@ -143,33 +154,53 @@ async def test_wire_schema_omits_unsupported_extra_properties(gemini):
     assert config.automatic_function_calling.disable is True
 
 
-async def test_analysis_parses_diseases_and_department(gemini):
+async def test_complete_response_uses_same_call_and_schema(gemini):
     import json
 
     raw = {
-        "assessment_status": "PRELIMINARY",
-        "symptom_summary": "테스트용 요약",
-        "suspected_diseases": [
-            {
-                "disease_name": "테스트 질환",
-                "reason": "테스트 이유이며 확정 진단이 아닙니다.",
-            }
-        ],
-        "recommended_department": "테스트 진료과",
+        "action": "COMPLETE",
+        "symptom_updates": {"severity": 2, "additional_symptoms": []},
+        "answered_fields": ["severity", "additional_symptoms"],
+        "next_question": None,
+        "analysis": {
+            "assessment_status": "PRELIMINARY",
+            "symptom_summary": "최종 답변을 반영한 테스트 요약",
+            "suspected_diseases": [
+                {"disease_name": "테스트 질환", "reason": "테스트 근거"}
+            ],
+            "recommended_department": "테스트 진료과",
+        },
     }
     gemini.client.aio.models.generate_content.return_value = SimpleNamespace(
         text=json.dumps(raw)
     )
-    output = await gemini.analyze_symptoms(Symptoms(main_symptom="테스트"))
-    assert output.assessment_status == "PRELIMINARY"
-    assert output.suspected_diseases[0].disease_name == "테스트 질환"
-    assert output.recommended_department == "테스트 진료과"
-
-
-async def test_analysis_rejects_missing_fields(gemini):
-    gemini.client.aio.models.generate_content.return_value = SimpleNamespace(
-        text='{"symptom_summary":"요약만 있는 구버전 응답"}'
+    output = await gemini.process_chat(request())
+    assert output.action == "COMPLETE"
+    assert output.analysis.recommended_department == "테스트 진료과"
+    assert gemini.client.aio.models.generate_content.await_count == 1
+    payload = json.loads(
+        gemini.client.aio.models.generate_content.call_args.kwargs["contents"]
     )
+    assert payload["answered_fields"] == ["onset"]
+    assert payload["turn_count"] == 2 and payload["max_turns"] == 5
+
+
+async def test_wrong_last_turn_action_gets_bounded_retry(gemini):
+    import json
+
+    gemini.client.aio.models.generate_content.return_value = SimpleNamespace(
+        text=json.dumps(
+            {
+                "action": "ASK_FOLLOW_UP",
+                "symptom_updates": {},
+                "answered_fields": [],
+                "next_question": "계속 질문",
+                "analysis": None,
+            }
+        )
+    )
+    last = request().model_copy(update={"turn_count": 5})
     with pytest.raises(BusinessException) as error:
-        await gemini.analyze_symptoms(Symptoms())
+        await gemini.process_chat(last)
     assert error.value.code == Code.AI_RESPONSE_INVALID
+    assert gemini.client.aio.models.generate_content.await_count == 2

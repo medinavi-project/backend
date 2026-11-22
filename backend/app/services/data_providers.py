@@ -7,7 +7,6 @@ from app.core.response_codes import Code
 
 
 class DataProvider(Protocol):
-    def hospitals(self) -> list[dict]: ...
     def medications(self) -> list[dict]: ...
 
 
@@ -19,9 +18,6 @@ class DemoDataProvider:
             )
         except (OSError, ValueError):
             raise BusinessException(code) from None
-
-    def hospitals(self):
-        return self._read("demo_hospitals.json", Code.HOSPITAL_DATA_UNAVAILABLE)
 
     def medications(self):
         return self._read("demo_medications.json", Code.MEDICATION_INFO_UNAVAILABLE)

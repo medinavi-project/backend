@@ -8,6 +8,7 @@ from starlette.responses import JSONResponse
 from app.core.exceptions import BusinessException
 from app.core.response import ApiResponse
 from app.core.response_codes import Code
+from app.hospital.errors import HospitalApiError
 
 logger = logging.getLogger("medinavi")
 
@@ -26,6 +27,17 @@ def register_handlers(app):
     @app.exception_handler(BusinessException)
     async def business(request, exc):
         return error_response(exc)
+
+    @app.exception_handler(HospitalApiError)
+    async def hospital(request, exc):
+        # hosAI hospital errors already carry the shared code/message/data shape.
+        return JSONResponse(
+            status_code=exc.status_code,
+            headers=exc.headers,
+            content=ApiResponse(
+                code=exc.code, message=exc.message, data=exc.data
+            ).model_dump(mode="json"),
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation(request, exc):

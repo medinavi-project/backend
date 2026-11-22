@@ -15,16 +15,25 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     SESSION_TTL_SECONDS: int = Field(default=1800, ge=1)
     MAX_CHAT_TURNS: int = Field(default=5, ge=1, le=5)
-    AI_PROVIDER: str = "gemini"
+    AI_PROVIDER: str = "clova_triage"
     GEMINI_API: SecretStr = SecretStr("")
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"
     AI_REQUEST_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=120)
     AI_MOCK_ENABLED: bool = False
-    HOSPITAL_DATA_PROVIDER: str = "demo"
     MEDICATION_DATA_PROVIDER: str = "demo"
     MFDS_API_KEY: SecretStr = SecretStr("")
     CLOVA_API_KEY: SecretStr = SecretStr("")
     CLOVA_MODEL: str = "HCX-005"
+    # Read via os.getenv by the vendored hosAI modules (env_file supplies them);
+    # declared here so they are documented and kept out of reprs.
+    # 문진 엔진(hosAI) 전용 CLOVA Studio 키. CLOVA_API_KEY(약 설명)와 별개.
+    CLOVASTUDIO_API_KEY: SecretStr = SecretStr("")
+    DATA_GO_KR_KEY: SecretStr = SecretStr("")
+    NCP_MAPS_CLIENT_ID: SecretStr = SecretStr("")
+    NCP_MAPS_CLIENT_SECRET: SecretStr = SecretStr("")
+    KDCA_API_KEY: SecretStr = SecretStr("")
+    HOSPITAL_RADIUS_MAX_KM: float = 10
+    HOSPITAL_MAX_RESULTS: int = 20
     MEDICATION_AI_ENABLED: bool = True
     OCR_PROVIDER: str = "disabled"
     CLOVA_OCR_INVOKE_URL: str = ""
@@ -37,7 +46,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_modes(self):
-        if self.AI_PROVIDER not in {"gemini", "mock"}:
+        if self.AI_PROVIDER not in {"clova_triage", "gemini", "mock"}:
             raise ValueError("Unsupported AI_PROVIDER")
         if self.AI_PROVIDER == "mock" and (
             not self.AI_MOCK_ENABLED or self.APP_ENV not in {"development", "test"}
@@ -56,10 +65,7 @@ class Settings(BaseSettings):
             self.APP_ENV not in {"development", "test"} or not self.AI_MOCK_ENABLED
         ):
             raise ValueError("OCR mock requires explicit development/test mock mode")
-        if (
-            self.HOSPITAL_DATA_PROVIDER != "demo"
-            or self.MEDICATION_DATA_PROVIDER != "demo"
-        ):
+        if self.MEDICATION_DATA_PROVIDER != "demo":
             raise ValueError("Only demo data providers are available")
         if self.APP_ENV == "production" and "*" in self.CORS_ORIGINS.split(","):
             raise ValueError("Wildcard CORS is not allowed in production")

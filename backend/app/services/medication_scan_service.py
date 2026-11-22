@@ -20,7 +20,6 @@ class MedicationScanService:
         return await run_in_threadpool(rewrite_guidance, result, self.settings)
 
     def _analyze(self, text):
-        from app.medicare_final.clova_client import ClovaClient, ClovaError
         from app.medicare_final.drug_search import search_drug
         from app.medicare_final.medication_pipeline import (
             get_medication_info,
@@ -47,7 +46,6 @@ class MedicationScanService:
             retries=0,
             timeout=10,
         )
-        model = None
         try:
             extraction = extract_candidates(text)
 
@@ -114,41 +112,19 @@ class MedicationScanService:
                     medications=matches,
                     warnings=["약품을 식별하지 못했습니다. 후보 확인이 필요합니다."],
                 )
-            if settings.CLOVA_API_KEY.get_secret_value():
-                model = ClovaClient(
-                    api_key=settings.CLOVA_API_KEY.get_secret_value(),
-                    model=settings.CLOVA_MODEL,
-                    retries=0,
-                    timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
-                )
-            result = get_medication_info(
-                list(dict.fromkeys(selected)),
-                client=client,
-                model_client=model,
-                allow_generation=model is not None,
-            )
-            validation = result.get("validation_result", {}).get("status", "not_run")
-            summaries = [
-                row
-                for row in result.get("ai_summary") or []
-                if row.get("status") in {"verified_extractive", "supported_with_checks"}
-                and row.get("text")
-            ]
-            result["ai_summary"] = summaries
-            visible = bool(summaries)
+            # No summary generation here: the purpose text comes from the guarded
+            # plain-language rewrite (rewrite_guidance), so a second CLOVA pass
+            # over the same effects only added latency.
+            result = get_medication_info(list(dict.fromkeys(selected)), client=client)
             warnings = list(result.get("warnings", []))
             if len(selected) != len(matches):
                 warnings.append(
                     "일부 약품이 미식별 상태입니다. 전체 처방의 안전성은 확인되지 않았습니다."
                 )
-            if model is None:
-                warnings.append("CLOVA_API_KEY 미설정으로 AI 생성을 생략했습니다.")
             return MedicationScanResult(
                 recognized_text=text,
                 status="COMPLETED"
-                if visible
-                and result.get("status") == "ready"
-                and len(selected) == len(matches)
+                if result.get("status") == "ready" and len(selected) == len(matches)
                 else ("PARTIAL" if result.get("official_drug_info") else "INCOMPLETE"),
                 medications=matches,
                 **partition_result(matches, result),
@@ -160,16 +136,12 @@ class MedicationScanService:
                 information_status="AVAILABLE"
                 if result.get("official_drug_info")
                 else "NOT_AVAILABLE",
-                validation_status=validation,
                 processing_status=result["status"].upper(),
-                ai_summary={"medications": summaries} if summaries else None,
                 warnings=warnings,
             )
-        except (MFDSError, ClovaError):
+        except MFDSError:
             raise BusinessException(Code.MEDICATION_INFO_UNAVAILABLE) from None
         except ValueError:
             raise BusinessException(Code.AI_RESPONSE_INVALID) from None
         finally:
             client.session.close()
-            if model:
-                model.session.close()

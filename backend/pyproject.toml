@@ -5,6 +5,8 @@ pythonpath = ["."]
 markers = ["integration: explicitly enabled live Gemini test"]
 [tool.ruff]
 target-version = "py312"
+# Vendored from hosAI; kept identical to upstream (no lint, no format).
+extend-exclude = ["app/hospital", "app/triage", "tests/hospital", "tests/triage"]
 
 [tool.ruff.lint.per-file-ignores]
 "app/medicare_final/*.py" = ["ALL"]

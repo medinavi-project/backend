@@ -14,8 +14,6 @@ from app.repositories.redis_session_repository import SessionRepository
 from app.routers import chat, hospitals, medications
 from app.services.analysis_service import AnalysisService
 from app.services.chat_service import ChatService
-from app.services.data_providers import DemoDataProvider
-from app.services.hospital_service import HospitalService
 from app.services.ocr_service import OCRService
 
 
@@ -37,7 +35,6 @@ def create_app(settings=None, provider=None):
             socket_timeout=2,
         )
         ai = provider or create_provider(settings)
-        data = DemoDataProvider()
         app.state.redis = redis
         app.state.chat = ChatService(
             SessionRepository(
@@ -49,7 +46,6 @@ def create_app(settings=None, provider=None):
             AnalysisService(ai),
             settings,
         )
-        app.state.hospitals = HospitalService(data)
         app.state.ocr = OCRService(settings, ai)
         try:
             yield
@@ -103,7 +99,13 @@ def create_app(settings=None, provider=None):
                 "redis": "UP",
                 "ai_provider": settings.AI_PROVIDER,
                 "ai_configured": settings.AI_PROVIDER == "mock"
-                or bool(settings.GEMINI_API.get_secret_value()),
+                or bool(
+                    (
+                        settings.CLOVASTUDIO_API_KEY
+                        if settings.AI_PROVIDER == "clova_triage"
+                        else settings.GEMINI_API
+                    ).get_secret_value()
+                ),
                 "ocr": "DISABLED",
                 "tts": "DISABLED",
             },

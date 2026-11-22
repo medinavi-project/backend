@@ -3,6 +3,7 @@
 import json
 import hashlib
 import re
+from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from .mfds_api import MFDSClient, MFDSError
 from .drug_search import search_drug
@@ -107,14 +108,37 @@ def build_drug_context(
     products, dur_results, reasons = [], {}, []
     cache_config = cache_policy()
     cached_evidence, cache_conflicts = [], []
+    sources = [
+        ("permit_list", client.permit_list),
+        ("permit", client.permit_detail),
+        ("easy", client.easy),
+        ("ingredients", client.ingredients),
+    ]
+    # Every lookup is independent, so all are started up front on a small pool
+    # and the loop below only collects results (same order and logic as before).
+    # ponytail: DUR for a drug that later fails identity is fetched anyway.
+    pool = ThreadPoolExecutor(max_workers=4)
+    fetched = (
+        {}
+        if cache_config["enabled"] and not cache_config["api_first"]
+        else {
+            (seq, name): pool.submit(_read, client, method, seq)
+            for seq in seqs
+            for name, method in sources
+        }
+    )
+    dur_jobs = {
+        (seq, kind): pool.submit(
+            check_type, client, seq, kind, max_pages=dur_page_limit
+        )
+        for seq in seqs
+        for kind in KINDS
+        if not (kind == "interaction" and len(seqs) == 1)
+    }
+    pool.shutdown(wait=False)
     for seq in seqs:
         responses = {}
-        for name, method in [
-            ("permit_list", client.permit_list),
-            ("permit", client.permit_detail),
-            ("easy", client.easy),
-            ("ingredients", client.ingredients),
-        ]:
+        for name, method in sources:
             cached = (
                 read_record(seq, name, cache_config)
                 if cache_config["enabled"]
@@ -128,7 +152,8 @@ def build_drug_context(
             if use_cache and not cache_config["api_first"]:
                 current = dict(cached)
             else:
-                current = _read(client, method, seq)
+                job = fetched.get((seq, name))
+                current = job.result() if job else _read(client, method, seq)
                 if current["status"] in ("api_error", "incomplete") and use_cache:
                     current = dict(cached)
                     current["api_status"] = "api_error_or_incomplete"
@@ -208,7 +233,7 @@ def build_drug_context(
                     "reason": "다른 복용약이 확인되지 않아 병용검사를 수행하지 않았습니다.",
                 }
                 continue
-            item = check_type(client, seq, kind, max_pages=dur_page_limit)
+            item = dur_jobs[(seq, kind)].result()
             dur_results[seq][kind] = item
             if item["status"] in (
                 "api_error",

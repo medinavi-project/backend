@@ -101,6 +101,8 @@ class Session(BaseModel):
     answered_fields: set[str] = Field(default_factory=set)
     receipts: dict[str, Receipt] = Field(default_factory=dict)
     failure_code: str | None = None
+    engine_state: dict = Field(default_factory=dict)
+    emergency_message: str | None = None
 
 
 class MedicationRequest(Input):

@@ -22,45 +22,8 @@ class RecognizedMedication(BaseModel):
     candidates: list[Candidate]
 
 
-class ScanResponse(BaseModel):
-    ocr_provider: str
-    recognized_text: str
-    medications: list[RecognizedMedication]
-
-
-class Medication(BaseModel):
-    item_seq: str
-    item_name: str
-    efficacy: str
-    usage: str
-    cautions: list[str]
-    summary: list[str]
-
-
-class GuideResponse(BaseModel):
-    data_source: str = "DEMO"
-    medications: list[Medication]
-    audio_url: str | None = None
-    audio_status: Literal["DISABLED", "COMPLETED", "FAILED"] = "DISABLED"
-    medical_disclaimer: str = "본 안내는 제공된 시연용 의약품 정보를 요약한 참고 자료이며 의료진과 약사의 지시를 대체하지 않습니다."
-
-
 class OCRResult(BaseModel):
     recognized_text: str
-
-
-class ScanGuidance(BaseModel):
-    status: Literal["COMPLETED", "NEEDS_CONFIRMATION"]
-    summary: list[str]
-    warnings: list[str]
-
-
-class ScanGuideResponse(ScanGuidance):
-    recognized_text: str
-    ocr_provider: str
-    analysis_source: str
-    audio_url: str | None = None
-    audio_status: Literal["DISABLED"] = "DISABLED"
 
 
 class IdentifiedMedicationDTO(BaseModel):

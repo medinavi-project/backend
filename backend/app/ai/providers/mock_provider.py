@@ -1,4 +1,4 @@
-from app.schemas.ai import AnalysisOutput, ChatOutput, SummaryOutput, SymptomUpdates
+from app.schemas.ai import AnalysisOutput, ChatOutput, SymptomUpdates
 
 
 class MockAIProvider:
@@ -25,18 +25,6 @@ class MockAIProvider:
             next_question="[MOCK] 증상을 조금 더 설명해 주세요.",
             analysis=None,
         )
-
-    async def explain_medication_text(self, text):
-        from app.schemas.medications import ScanGuidance
-
-        return ScanGuidance(
-            status="NEEDS_CONFIRMATION",
-            summary=["[MOCK] OCR→AI 흐름 테스트"],
-            warnings=["실제 약품 안내가 아닙니다."],
-        )
-
-    async def summarize_medication(self, medication):
-        return SummaryOutput(summary=[medication["efficacy"], medication["usage"]])
 
     async def close(self):
         pass

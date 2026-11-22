@@ -16,11 +16,8 @@ class Settings(BaseSettings):
     SESSION_TTL_SECONDS: int = Field(default=1800, ge=1)
     MAX_CHAT_TURNS: int = Field(default=5, ge=1, le=5)
     AI_PROVIDER: str = "clova_triage"
-    GEMINI_API: SecretStr = SecretStr("")
-    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
     AI_REQUEST_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=120)
     AI_MOCK_ENABLED: bool = False
-    MEDICATION_DATA_PROVIDER: str = "demo"
     MFDS_API_KEY: SecretStr = SecretStr("")
     CLOVA_API_KEY: SecretStr = SecretStr("")
     CLOVA_MODEL: str = "HCX-005"
@@ -39,34 +36,22 @@ class Settings(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str = ""
     CLOVA_OCR_SECRET: SecretStr = SecretStr("")
     OCR_REQUEST_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=120)
-    OCR_API_URL: str = ""
-    OCR_API_TOKEN: SecretStr = SecretStr("")
-    TTS_PROVIDER: str = "disabled"
     CORS_ORIGINS: str = "http://localhost:8501"
 
     @model_validator(mode="after")
     def validate_modes(self):
-        if self.AI_PROVIDER not in {"clova_triage", "gemini", "mock"}:
+        if self.AI_PROVIDER not in {"clova_triage", "mock"}:
             raise ValueError("Unsupported AI_PROVIDER")
         if self.AI_PROVIDER == "mock" and (
             not self.AI_MOCK_ENABLED or self.APP_ENV not in {"development", "test"}
         ):
             raise ValueError("Mock requires AI_MOCK_ENABLED=true and development/test")
-        if (
-            self.OCR_PROVIDER not in {"disabled", "http", "mock", "clova"}
-            or self.TTS_PROVIDER != "disabled"
-        ):
-            raise ValueError("OCR and TTS are not implemented; use disabled")
-        if self.OCR_PROVIDER == "http" and not self.OCR_API_URL.startswith(
-            ("http://", "https://")
-        ):
-            raise ValueError("OCR_API_URL is required")
+        if self.OCR_PROVIDER not in {"disabled", "mock", "clova"}:
+            raise ValueError("Unsupported OCR_PROVIDER")
         if self.OCR_PROVIDER == "mock" and (
             self.APP_ENV not in {"development", "test"} or not self.AI_MOCK_ENABLED
         ):
             raise ValueError("OCR mock requires explicit development/test mock mode")
-        if self.MEDICATION_DATA_PROVIDER != "demo":
-            raise ValueError("Only demo data providers are available")
         if self.APP_ENV == "production" and "*" in self.CORS_ORIGINS.split(","):
             raise ValueError("Wildcard CORS is not allowed in production")
         return self

@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 DISCLAIMER = "본 결과는 AI 기반 임시 참고 정보이며 의학적 진단이 아닙니다. 정확한 판단은 의료진의 진료를 받아야 합니다."
 
@@ -103,16 +103,3 @@ class Session(BaseModel):
     failure_code: str | None = None
     engine_state: dict = Field(default_factory=dict)
     emergency_message: str | None = None
-
-
-class MedicationRequest(Input):
-    item_seqs: list[str] = Field(min_length=1, max_length=10)
-
-    @field_validator("item_seqs")
-    @classmethod
-    def unique(cls, values):
-        if len(set(values)) != len(values) or any(
-            not value.strip() for value in values
-        ):
-            raise ValueError("약품 식별자는 비어 있거나 중복될 수 없습니다.")
-        return values

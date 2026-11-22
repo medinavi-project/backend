@@ -3,8 +3,6 @@
 import re
 import unicodedata
 import json
-import os
-from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
@@ -79,126 +77,46 @@ def _name_stem(value):
     )
 
 
+DICTIONARY = (
+    Path(__file__).parent / "data" / "mfds_collection" / "drug_name_dictionary.json"
+)
+
+
 @lru_cache(maxsize=4)
-def _read_json(path, mtime):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def _load(path):
-    # Cached per file version; a re-export changes mtime and reloads.
-    return _read_json(str(path), path.stat().st_mtime)
-
-
-def _load_rows(path, default):
-    """Merged dictionary rows; None when unavailable."""
-    result = {}
+def _index(path, _mtime):
+    """(rows, stems, coverage) for one dictionary file; cached per file version,
+    so re-exporting the dictionary reloads it."""
     try:
-        data = _load(path)
-        rows = data["items"]
-        if not isinstance(rows, list):
-            return None, {}
-        if default:
-            collected = (
-                Path(__file__).parent
-                / "data"
-                / "mfds_collection"
-                / "drug_name_dictionary.json"
-            )
-            try:
-                snapshot = _load(collected)
-                extra = snapshot.get("items", [])
-                if isinstance(extra, list):
-                    result["collected_coverage"] = snapshot.get("coverage", {})
-                    # Separate optional limit for search hints; these never prove identity.
-                    age_limit = os.getenv("MFDS_DICTIONARY_MAX_AGE_HOURS")
-                    if age_limit:
-                        try:
-                            seconds = float(age_limit) * 3600
-                            if not 0 <= seconds <= 87600 * 3600:
-                                raise ValueError()
-
-                            def recent(row):
-                                try:
-                                    stamp = datetime.fromisoformat(row["retrieved_at"])
-                                    if stamp.tzinfo is None:
-                                        return False
-                                    age = (
-                                        datetime.now(timezone.utc)
-                                        - stamp.astimezone(timezone.utc)
-                                    ).total_seconds()
-                                    return 0 <= age <= seconds
-                                except (KeyError, TypeError, ValueError):
-                                    return False
-
-                            extra = [
-                                row
-                                for row in extra
-                                if isinstance(row, dict) and recent(row)
-                            ]
-                        except ValueError:
-                            extra = []
-                    by_seq = {
-                        str(row.get("item_seq")): row
-                        for row in rows
-                        if isinstance(row, dict)
-                    }
-                    by_seq.update(
-                        {
-                            str(row.get("item_seq")): row
-                            for row in extra
-                            if isinstance(row, dict)
-                        }
-                    )
-                    rows = list(by_seq.values())
-            except (OSError, ValueError, TypeError, AttributeError):
-                pass
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        rows = [
+            r
+            for r in data["items"]
+            if isinstance(r, dict)
+            and re.fullmatch(r"\d{9}", str(r.get("item_seq", "")))
+            and isinstance(r.get("official_name"), str)
+        ]
     except (OSError, ValueError, KeyError, TypeError):
-        return None, {}
-    return rows, result.get("collected_coverage", {})
-
-
-@lru_cache(maxsize=4)
-def _index(path, default, _versions):
-    # ponytail: age filter is evaluated once per file version, not per call.
-    rows, coverage = _load_rows(Path(path), default)
-    if rows is None:
         return None
-    rows = [
-        r
-        for r in rows
-        if isinstance(r, dict)
-        and re.fullmatch(r"\d{9}", str(r.get("item_seq", "")))
-        and isinstance(r.get("official_name"), str)
-    ]
-    return rows, [_name_stem(r["official_name"]) for r in rows], coverage
+    stems = [_name_stem(r["official_name"]) for r in rows]
+    return rows, stems, data.get("coverage", {})
 
 
 def find_local_candidates(query, *, limit=5, dictionary_path=None):
-    """저장된 부분 표본에서만 후보를 찾는다. 현재 허가나 품목 확정은 하지 않는다."""
-    path = (
-        Path(dictionary_path)
-        if dictionary_path is not None
-        else Path(__file__).parent / "data" / "drug_name_dictionary.json"
-    )
+    """약 이름 사전에서 후보만 찾는다. 현재 허가나 품목 확정은 하지 않는다."""
+    path = Path(dictionary_path) if dictionary_path is not None else DICTIONARY
     result = {
         "status": "dictionary_unavailable",
         "coverage": "partial",
         "candidates": [],
         "truncated": False,
     }
-    default = dictionary_path is None
-    collected = (
-        Path(__file__).parent / "data" / "mfds_collection" / "drug_name_dictionary.json"
-    )
-    versions = tuple(
-        f.stat().st_mtime if f.exists() else None for f in (path, collected)
-    ) + (os.getenv("MFDS_DICTIONARY_MAX_AGE_HOURS"),)
-    index = _index(str(path), default, versions)
+    try:
+        index = _index(str(path), path.stat().st_mtime)
+    except OSError:
+        index = None
     if index is None:
         return result
-    rows, stems, coverage = index
-    if default:
-        result["collected_coverage"] = coverage
+    rows, stems, result["collected_coverage"] = index
     stem = _name_stem(query)
     if len(stem) < 2:
         result["status"] = "query_too_short"

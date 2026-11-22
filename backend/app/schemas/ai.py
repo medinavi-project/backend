@@ -110,8 +110,3 @@ class ChatOutput(BaseModel):
         elif self.next_question is not None or self.analysis is None:
             raise ValueError("COMPLETE requires null question and an analysis result")
         return self
-
-
-class SummaryOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    summary: list[str] = Field(min_length=1, max_length=10)

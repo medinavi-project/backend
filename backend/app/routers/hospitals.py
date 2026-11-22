@@ -1,25 +1,35 @@
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request
-from pydantic import StringConstraints
+from fastapi import APIRouter, Query
+from starlette.concurrency import run_in_threadpool
 
 from app.core.response import ApiResponse
-from app.schemas.hospitals import HospitalResponse
+from app.hospital.models import HospitalListResponse
+from app.hospital.service import search_open_hospitals
 
 router = APIRouter(prefix="/api/v1/hospitals", tags=["병원"])
 
 
-@router.get("/open", response_model=ApiResponse[HospitalResponse])
+# Contract follows the hosAI hospital module (NMC public API).
+@router.get("/open", response_model=ApiResponse[HospitalListResponse])
 async def hospitals(
-    request: Request,
-    department: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
-    ],
-    latitude: Annotated[float, Query(ge=-90, le=90, allow_inf_nan=False)],
-    longitude: Annotated[float, Query(ge=-180, le=180, allow_inf_nan=False)],
-    radius: Annotated[int, Query(ge=100, le=20000)] = 3000,
+    department: Annotated[str, Query()],
+    latitude: Annotated[float, Query()],
+    longitude: Annotated[float, Query()],
+    radius_km: Annotated[float, Query()],
+    open_now: Annotated[bool, Query()],
+    now: Annotated[datetime | None, Query(include_in_schema=False)] = None,
 ):
-    data = request.app.state.hospitals.search(department, latitude, longitude, radius)
+    data = await run_in_threadpool(
+        search_open_hospitals,
+        department=department,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        open_now=open_now,
+        now=now,
+    )
     return ApiResponse(
         code="SUCCESS",
         message="병원 검색이 완료되었습니다."

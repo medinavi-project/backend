@@ -34,6 +34,7 @@ class ChatService:
             answered_fields=sorted(session.answered_fields),
             turn_count=session.turn_count + 1,
             max_turns=self.settings.MAX_CHAT_TURNS,
+            engine_state=session.engine_state,
         )
         output = await self.provider.process_chat(request)
         # Enforce the same contract for every provider, including external adapters.
@@ -50,11 +51,18 @@ class ChatService:
             if value is not None:
                 setattr(session.symptoms, field, value)
         session.answered_fields.update(output.answered_fields)
+        if output.engine_state is not None:
+            session.engine_state = output.engine_state
         session.messages = messages
         session.turn_count = request.turn_count
         session.updated_at = datetime.now(UTC)
-        if output.action == "COMPLETE":
-            session.result = self.analysis.result(session, output.analysis)
+        if output.action == "EMERGENCY":
+            session.status = Status.EMERGENCY
+            session.emergency_message = output.emergency_guidance
+        elif output.action == "COMPLETE":
+            session.result = self.analysis.result(
+                session, output.analysis, output.references
+            )
             session.status = Status.COMPLETED
         else:
             session.status = Status.IN_PROGRESS
@@ -71,6 +79,7 @@ class ChatService:
             turn_count=session.turn_count,
             collected_symptoms=session.symptoms,
             result_available=session.result is not None,
+            emergency_message=session.emergency_message,
         )
 
     async def create(self, request):
@@ -86,6 +95,7 @@ class ChatService:
             turn_count=session.turn_count,
             expires_at=session.updated_at
             + timedelta(seconds=self.settings.SESSION_TTL_SECONDS),
+            emergency_message=session.emergency_message,
         )
 
     async def message(self, session_id, request):

@@ -7,7 +7,7 @@ class AnalysisService:
     def __init__(self, provider):
         self.provider = provider
 
-    def result(self, session, output):
+    def result(self, session, output, references=()):
         return Result(
             session_id=session.session_id,
             status=Status.COMPLETED,
@@ -18,4 +18,5 @@ class AnalysisService:
                 Disease(**d.model_dump()) for d in output.suspected_diseases
             ],
             recommended_department=output.recommended_department,
+            references=list(references),
         )

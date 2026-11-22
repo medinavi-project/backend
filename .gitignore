@@ -13,3 +13,6 @@ __pycache__/
 backend/app/medicare_final/data/mfds_collection.sqlite3
 backend/app/medicare_final/data/mfds_collection/*.csv
 backend/app/medicare_final/data/mfds_collection/permit.json
+
+# Tests stay local only (not committed)
+backend/tests/

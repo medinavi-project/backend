@@ -28,6 +28,8 @@ class ChatInput(BaseModel):
     answered_fields: list[SymptomField]
     turn_count: int = Field(ge=1)
     max_turns: int = Field(ge=1, le=5)
+    # Opaque per-session state of an engine that keeps its own memory.
+    engine_state: dict = Field(default_factory=dict)
 
 
 class SymptomUpdates(BaseModel):
@@ -65,7 +67,7 @@ class AnalysisOutput(BaseModel):
 
 class ChatOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    action: Literal["ASK_FOLLOW_UP", "COMPLETE"]
+    action: Literal["ASK_FOLLOW_UP", "COMPLETE", "EMERGENCY"]
     symptom_updates: SymptomUpdates
     answered_fields: list[SymptomField]
     next_question: (
@@ -75,6 +77,9 @@ class ChatOutput(BaseModel):
         | None
     )
     analysis: AnalysisOutput | None
+    emergency_guidance: str | None = None
+    engine_state: dict | None = None
+    references: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_contract(self, info: ValidationInfo):
@@ -88,6 +93,12 @@ class ChatOutput(BaseModel):
             raise ValueError(
                 "answered_fields must reference explicitly supplied non-null updates"
             )
+        if self.action == "EMERGENCY":
+            if not self.emergency_guidance or self.next_question or self.analysis:
+                raise ValueError("EMERGENCY requires guidance only")
+            return self
+        if self.emergency_guidance is not None:
+            raise ValueError("emergency_guidance is only for EMERGENCY")
         if self.action == "ASK_FOLLOW_UP":
             if self.next_question is None or self.analysis is not None:
                 raise ValueError("ASK_FOLLOW_UP requires a question and null analysis")
@@ -99,8 +110,3 @@ class ChatOutput(BaseModel):
         elif self.next_question is not None or self.analysis is None:
             raise ValueError("COMPLETE requires null question and an analysis result")
         return self
-
-
-class SummaryOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    summary: list[str] = Field(min_length=1, max_length=10)

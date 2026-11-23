@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -15,6 +16,8 @@ from app.schemas.chat import (
     Session,
     Status,
 )
+
+logger = logging.getLogger("medinavi")
 
 
 class ChatService:
@@ -36,14 +39,28 @@ class ChatService:
             max_turns=self.settings.MAX_CHAT_TURNS,
             engine_state=session.engine_state,
         )
-        output = await self.provider.process_chat(request)
+        # Logs carry the session id and failure kind only, never user text.
+        sid = session.session_id
+        try:
+            output = await self.provider.process_chat(request)
+        except BusinessException as exc:
+            logger.warning("AI turn failed session=%s code=%s", sid, exc.code)
+            raise
+        except Exception:
+            logger.exception("AI turn crashed session=%s", sid)
+            raise BusinessException(Code.AI_REQUEST_FAILED) from None
         # Enforce the same contract for every provider, including external adapters.
         try:
             output = ChatOutput.model_validate(
                 output.model_dump(exclude_unset=True),
                 context=request.model_dump(),
             )
-        except ValidationError:
+        except ValidationError as exc:
+            logger.warning(
+                "AI output invalid session=%s fields=%s",
+                sid,
+                [".".join(map(str, e["loc"])) for e in exc.errors()],
+            )
             raise BusinessException(Code.AI_RESPONSE_INVALID) from None
         for field, value in output.symptom_updates.model_dump(
             exclude_unset=True

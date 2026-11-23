@@ -5,6 +5,7 @@ Only this file knows both shapes.
 """
 
 import copy
+import logging
 import re
 
 from pydantic import ValidationError
@@ -13,6 +14,8 @@ from starlette.concurrency import run_in_threadpool
 from app.core.exceptions import BusinessException
 from app.core.response_codes import Code
 from app.schemas.ai import ChatOutput
+
+logger = logging.getLogger("medinavi")
 
 # (words the model may write, words that count as the user having said it).
 # ponytail: fixed cue list, no negation handling ("열은 없어요" counts as said);
@@ -115,7 +118,8 @@ class ClovaTriageProvider:
                 request.max_turns,
                 " ".join(m.content for m in request.messages if m.role == "user"),
             )
-        except ValueError:  # engine's own contract check failed
+        except ValueError as exc:  # engine's own contract check failed
+            logger.warning("Triage engine contract violation: %s", exc)
             raise BusinessException(Code.AI_RESPONSE_INVALID) from None
         try:
             return ChatOutput.model_validate(
@@ -131,7 +135,11 @@ class ClovaTriageProvider:
                 },
                 strict=False,
             )
-        except ValidationError:
+        except ValidationError as exc:
+            logger.warning(
+                "Triage output invalid fields=%s",
+                [".".join(map(str, e["loc"])) for e in exc.errors()],
+            )
             raise BusinessException(Code.AI_RESPONSE_INVALID) from None
 
     async def close(self):

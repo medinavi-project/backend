@@ -1,9 +1,12 @@
+import logging
 import math
 import os
 from typing import Optional
 import httpx
 
 from app.hospital.errors import HospitalApiError
+
+logger = logging.getLogger("medinavi")
 
 EARTH_RADIUS_KM = 6371.0
 NCP_REVERSE_GEOCODE_URL = "https://maps.apigw.ntruss.com/map-reversegeocode/v2/gc"
@@ -83,6 +86,7 @@ def _reverse_geocode_region_uncached(latitude: float, longitude: float) -> tuple
             last_exc = exc
 
     if last_exc is not None or response is None:
+        logger.warning("NCP reverse geocode request failed: %r", last_exc)
         if isinstance(last_exc, httpx.TimeoutException):
             raise HospitalApiError(
                 status_code=504,
@@ -96,6 +100,7 @@ def _reverse_geocode_region_uncached(latitude: float, longitude: float) -> tuple
         )
 
     if response.status_code != 200:
+        logger.warning("NCP reverse geocode HTTP %s body=%.200s", response.status_code, response.text)
         raise HospitalApiError(
             status_code=502,
             code="HOSPITAL_SEARCH_FAILED",

@@ -1,3 +1,6 @@
+import html
+import re
+
 from app.schemas.medications import (
     MedicationCard,
     MedicationDescription,
@@ -6,9 +9,17 @@ from app.schemas.medications import (
 )
 
 
+def _plain(text):
+    """Official texts carry HTML (<p>, <br>, &nbsp;); return plain text, breaks as \n."""
+    text = re.sub(r"(?i)<br\s*/?>|</p\s*>", "\n", text)
+    text = html.unescape(re.sub(r"<[^>]+>", "", text)).replace("\xa0", " ")
+    lines = (re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n"))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
 def text_of(value):
     if isinstance(value, str):
-        return value.strip() or None
+        return _plain(value) or None
     if isinstance(value, list):
         texts = [text_of(row) for row in value]
         return "\n\n".join(dict.fromkeys(t for t in texts if t)) or None
@@ -22,11 +33,11 @@ def present_scan(result):
     for item in result.identified_medications:
         info = item.official_info or {}
         description = MedicationDescription(
-            purpose=item.display_purpose
+            purpose=text_of(item.display_purpose)
             or text_of(item.summary)
             or text_of(info.get("effects")),
             how_to_take=text_of(info.get("dosage")),
-            precautions=item.display_precautions or text_of(item.precautions),
+            precautions=text_of(item.display_precautions) or text_of(item.precautions),
             side_effects=text_of(info.get("side_effects")),
             storage=text_of(info.get("storage")),
         )

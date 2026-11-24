@@ -23,7 +23,8 @@ class Hospital(BaseModel):
     address: str
     latitude: float
     longitude: float
-    department: str
+    department: str  # 요청한 진료과 중 이 병원이 해당하는 첫 번째
+    departments: list[str] = []  # 이 병원이 해당하는 요청 진료과 전부
     phone: Optional[str] = None
     open_hours: list[OpenHours]
     is_open: bool

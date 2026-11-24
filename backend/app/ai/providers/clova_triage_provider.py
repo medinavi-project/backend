@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.exceptions import BusinessException
 from app.core.response_codes import Code
+from app.hospital.dept_codes import normalize_department
 from app.schemas.ai import ChatOutput
 
 logger = logging.getLogger("medinavi")
@@ -85,7 +86,13 @@ def _turn(message, state, turn_count, max_turns, said=""):
         facts = [state.get(k) for k in ("main_symptom", "body_location", "onset")]
         facts += state.get("additional_symptoms") or []
         said = " ".join([said, *(f for f in facts if isinstance(f, str))])
-        payload = {**payload, "analysis": _drop_unstated(analysis, said)}
+        analysis = _drop_unstated(analysis, said)
+        if analysis and analysis.get("recommended_department"):
+            # 병원 검색이 받는 표준 진료과 이름으로만 내보낸다 (예: 소화기내과 → 내과)
+            analysis["recommended_department"] = normalize_department(
+                analysis["recommended_department"]
+            )
+        payload = {**payload, "analysis": analysis}
         references = [
             f"{d.get('title_ko') or d['title']} | MedlinePlus.gov | {d['url']}"
             for d in rag.get("medlineplus_docs", [])

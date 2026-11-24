@@ -50,7 +50,15 @@ FIELD_QUESTIONS = {
 # current_state에 같이 저장하지만 응답(symptom_updates)이나 LLM 프롬프트의 증상 상태에는 넣지 않는다.
 # 호출 측이 state를 다시 만들어 넘기면 사라질 수 있고, 그래도 문진은 동작한다.
 LAST_QUESTION_KEY = "_last_question"  # 직전에 보낸 next_question (짧은 대답 해석용)
-CONDITION_KEY = "_condition"  # 사용자가 말한 질환 {"name", "kcd_code", "departments", "certainty"}
+CONDITION_KEY = "_condition"
+DETAIL_ASKED_KEY = "_asked_detail_location"  # 넓은 부위의 상세 위치를 이미 물었는지
+AGE_KEY = "_age"  # 나이 질문에 대한 환자 답 (그대로 저장)
+BROAD_LOCATIONS = {"배": "배의 어느 쪽이 아프신가요? (명치, 오른쪽 위·아래, 왼쪽 위·아래, 배꼽 주변 등)",
+                   "복부": "배의 어느 쪽이 아프신가요? (명치, 오른쪽 위·아래, 왼쪽 위·아래, 배꼽 주변 등)",
+                   "머리": "머리의 어느 쪽이 아프신가요? (이마, 관자놀이, 뒷머리, 한쪽·양쪽 등)"}
+# 나이에 따라 진료과(소아청소년과/내과 등)가 갈리는 증상
+AGE_DEPENDENT_MARKERS = ("기침", "콧물", "코막힘", "가래", "발열", "열", "설사", "구토", "배", "복")
+AGE_QUESTION = "환자분의 나이가 어떻게 되시나요? (어린이라면 나이를 알려 주세요)"  # 사용자가 말한 질환 {"name", "kcd_code", "departments", "certainty"}
 
 # ── 증상 종류별 필수 슬롯 ──
 # 통증이면 5개 모두, 전신 증상(기침·발열 등)은 부위·강도를 묻지 않고, 그 밖의 증상은 강도만 뺀다.
@@ -398,7 +406,9 @@ def _extract_raw_field(raw_updates, user_message, field, current_state, last_que
         if alias in raw_updates and raw_updates[alias] is not None:
             return raw_updates[alias]
 
-    if current_state.get(field) is not None:
+    # 넓은 부위("배")에 상세 위치를 물은 직후에는 부위를 다시 채울 수 있다
+    refining = field == "body_location" and last_question in BROAD_LOCATIONS.values()
+    if current_state.get(field) is not None and not refining:
         return None
 
     msg = (user_message or "").strip()
@@ -652,6 +662,19 @@ def _pick_next_question(current_state, raw_question=None):
     return FIELD_QUESTIONS["additional_symptoms"]
 
 
+def _extra_question(state):
+    """핵심 슬롯이 다 찼어도 진료과가 갈릴 수 있어 한 번 더 물을 질문 (없으면 None)."""
+    loc = "".join(str(state.get("body_location") or "").split())
+    if loc in BROAD_LOCATIONS and not state.get(DETAIL_ASKED_KEY):
+        state[DETAIL_ASKED_KEY] = True
+        return BROAD_LOCATIONS[loc]
+    text = f"{state.get('main_symptom') or ''}{state.get('body_location') or ''}"
+    if AGE_KEY not in state and any(m in text for m in AGE_DEPENDENT_MARKERS):
+        state[AGE_KEY] = None
+        return AGE_QUESTION
+    return None
+
+
 def _sanitize_analysis(raw_analysis, current_state, rag_context=None):
     if not isinstance(raw_analysis, dict):
         raw_analysis = {}
@@ -822,14 +845,18 @@ def _sanitize_response(raw_obj, current_state, turn_count, max_turns=5, user_mes
     action = raw_obj.get("action")
     if action not in ("ASK_FOLLOW_UP", "COMPLETE"):
         action = "COMPLETE" if (turn_count >= max_turns or is_core_complete(current_state)) else "ASK_FOLLOW_UP"
-    if turn_count >= max_turns or is_core_complete(current_state):
+    # 끝낼지는 서버가 정한다: 상한 도달 전에는 핵심 슬롯이 다 찰 때까지 묻는다 (LLM의 조기 COMPLETE 무시)
+    extra_q = None
+    if turn_count >= max_turns:
         action = "COMPLETE"
-    elif not current_state.get("main_symptom"):
-        # 주증상도 모르는데 LLM이 끝내려 하면 분석할 것이 없다 → 턴이 남았으면 계속 묻는다
+    elif not is_core_complete(current_state):
         action = "ASK_FOLLOW_UP"
+    else:
+        extra_q = _extra_question(current_state)
+        action = "ASK_FOLLOW_UP" if extra_q else "COMPLETE"
 
     if action == "ASK_FOLLOW_UP":
-        next_q = _pick_next_question(current_state, raw_obj.get("next_question"))
+        next_q = extra_q or _pick_next_question(current_state, raw_obj.get("next_question"))
         current_state[LAST_QUESTION_KEY] = next_q
         payload = {
             "action": "ASK_FOLLOW_UP",
@@ -868,6 +895,8 @@ def run_triage_turn(user_message, current_state, turn_count, max_turns=5, last_q
 
     # 직전 질문: 인자 > 서버가 state에 저장한 값. "7", "네" 같은 짧은 대답을 해석하는 데 쓴다
     last_question = _normalize_str_or_none(last_question) or _normalize_str_or_none(current_state.get(LAST_QUESTION_KEY))
+    if last_question == AGE_QUESTION:
+        current_state[AGE_KEY] = _truncate_non_ws(user_message.strip(), 30)
     required = required_fields(current_state)
     known_condition = current_state.get(CONDITION_KEY)
 
@@ -976,6 +1005,7 @@ def generate_final_analysis(current_state, rag_context):
 [환자 증상 정보]
 {json.dumps(_public_state(current_state), ensure_ascii=False)}
 {_condition_prompt_line(current_state)}
+환자 나이: {current_state.get(AGE_KEY) or "모름 (성인 기준으로 진료과를 추천해)"}
 
 [MedlinePlus.gov 공식 문서]
 {json.dumps(compact_docs, ensure_ascii=False)}

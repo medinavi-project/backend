@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from typing import Any, Optional
@@ -6,14 +7,17 @@ import httpx
 
 from app.hospital.errors import HospitalApiError
 
+logger = logging.getLogger("medinavi")
+
 NMC_LIST_URL = "https://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncListInfoInqire"
-CACHE_TTL_SECONDS = 600.0
+# 요일 조건(QT) 없이 받으므로 진료시간 원본만 캐시한다. 진료 중 여부는 매 요청 계산.
+CACHE_TTL_SECONDS = 3600.0
 # 한 지역·진료과 결과가 100건을 넘는 경우가 실제로 있다 (서울 중구 내과 127건, 강남구 내과 498건).
 # 목록 API는 거리순이 아니므로 첫 페이지만 받으면 가까운 병원이 빠질 수 있어 전체 페이지를 받는다.
 MAX_PAGES = 10
 
 # 캐시에는 공공데이터 원본 행(dict)만 저장하고 (만료시각, 행목록) 형태로 보관
-_RAW_ROW_CACHE: dict[tuple[str, str, str, int], tuple[float, list[dict[str, Any]]]] = {}
+_RAW_ROW_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
 
 
 def clear_raw_row_cache() -> None:
@@ -36,8 +40,12 @@ def parse_nmc_list_page(xml_text: str) -> tuple[list[dict[str, Any]], Optional[i
             message="병원 정보를 검색하지 못했습니다.",
         ) from exc
 
-    result_code = (root.findtext(".//resultCode") or "").strip()
-    if result_code and result_code != "00":
+    # 정상 응답은 resultCode, 게이트웨이 오류는 returnReasonCode (22 = 일일 호출 한도 초과)
+    result_code = (root.findtext(".//resultCode") or root.findtext(".//returnReasonCode") or "").strip()
+    if result_code and result_code not in ("00", "0"):
+        logger.warning("NMC list API error resultCode=%s", result_code)
+        if result_code == "22":
+            raise _rate_limited()
         raise HospitalApiError(
             status_code=502,
             code="HOSPITAL_SEARCH_FAILED",
@@ -62,10 +70,9 @@ def fetch_raw_hospitals(
     qd: str,
     q0: str,
     q1: str,
-    qt: int,
     num_of_rows: int = 500,  # 2026-11-21 실측: 500건 한 번에 응답(강남구 내과 490건, 1.3초)
 ) -> list[dict[str, Any]]:
-    cache_key = (qd, f"{q0}|{q1}", str(qt), qt)
+    cache_key = (qd, f"{q0}|{q1}")
     now_ts = time.monotonic()
     cached = _RAW_ROW_CACHE.get(cache_key)
     if cached is not None:
@@ -88,7 +95,6 @@ def fetch_raw_hospitals(
         params: dict[str, Any] = {
             "ServiceKey": service_key,
             "QD": qd,
-            "QT": str(qt),
             "pageNo": str(page_no),
             "numOfRows": str(num_of_rows),
         }
@@ -123,6 +129,7 @@ def _get_page(params: dict[str, Any]) -> str:
             last_exc = exc
 
     if last_exc is not None or response is None:
+        logger.warning("NMC list API request failed: %r", last_exc)
         if isinstance(last_exc, httpx.TimeoutException):
             raise HospitalApiError(
                 status_code=504,
@@ -136,9 +143,20 @@ def _get_page(params: dict[str, Any]) -> str:
         )
 
     if response.status_code != 200:
+        logger.warning("NMC list API HTTP %s body=%.200s", response.status_code, response.text)
+        if response.status_code == 429:
+            raise _rate_limited()
         raise HospitalApiError(
             status_code=502,
             code="HOSPITAL_SEARCH_FAILED",
             message="병원 정보를 검색하지 못했습니다.",
         )
     return response.text
+
+
+def _rate_limited() -> HospitalApiError:
+    return HospitalApiError(
+        status_code=429,
+        code="RATE_LIMIT_EXCEEDED",
+        message="외부 서비스 호출 한도를 초과했습니다.",
+    )

@@ -9,7 +9,11 @@ from app.hospital.dept_codes import resolve_department
 from app.hospital.errors import HospitalApiError
 from app.hospital.geo import haversine_km, reverse_geocode_region
 from app.hospital.models import Hospital, HospitalListResponse
-from app.hospital.open_hours import build_open_hours, ensure_seoul_now, get_qt_code, is_open_now
+from app.hospital.open_hours import build_open_hours, ensure_seoul_now, is_open_now
+
+
+# 진료과 하나당 외부 API를 따로 부르므로 상한을 둔다 (호출 한도 보호)
+MAX_DEPARTMENTS = 5
 
 
 def get_radius_max_km() -> float:
@@ -35,7 +39,7 @@ def validate_search_inputs(
     latitude: float,
     longitude: float,
     radius_km: float,
-) -> tuple[str, str]:
+) -> list[tuple[str, str]]:
     if not (-90.0 <= latitude <= 90.0) or not (-180.0 <= longitude <= 180.0):
         raise HospitalApiError(
             status_code=400,
@@ -51,16 +55,29 @@ def validate_search_inputs(
             message="검색 반경이 허용 범위를 벗어났습니다.",
         )
 
-    resolved = resolve_department(department)
-    if resolved is None:
-        raise HospitalApiError(
-            status_code=422,
-            code="VALIDATION_ERROR",
-            message="요청 데이터가 올바르지 않습니다.",
-            data={"field_errors": [{"field": "department", "reason": "지원하지 않는 진료과입니다."}]},
-        )
-
+    # "내과,외과"처럼 쉼표로 여러 진료과를 받는다. 별칭은 표준 이름으로 합치고 중복은 뺀다.
+    names = [d for d in (department or "").split(",") if d.strip()]
+    resolved: list[tuple[str, str]] = []
+    for name in names:
+        dept = resolve_department(name)
+        if dept is None:
+            raise _dept_error(f"지원하지 않는 진료과입니다: {name.strip()}")
+        if dept not in resolved:
+            resolved.append(dept)
+    if not resolved:
+        raise _dept_error("진료과를 하나 이상 입력해야 합니다.")
+    if len(resolved) > MAX_DEPARTMENTS:
+        raise _dept_error(f"진료과는 한 번에 {MAX_DEPARTMENTS}개까지 검색할 수 있습니다.")
     return resolved
+
+
+def _dept_error(reason: str) -> HospitalApiError:
+    return HospitalApiError(
+        status_code=422,
+        code="VALIDATION_ERROR",
+        message="요청 데이터가 올바르지 않습니다.",
+        data={"field_errors": [{"field": "department", "reason": reason}]},
+    )
 
 
 def _parse_float_or_none(val: Any) -> Optional[float]:
@@ -123,23 +140,47 @@ def search_open_hospitals(
     open_now: bool,
     now: Optional[datetime] = None,
 ) -> HospitalListResponse:
-    standard_dept, qd = validate_search_inputs(department, latitude, longitude, radius_km)
+    depts = validate_search_inputs(department, latitude, longitude, radius_km)
     seoul_now = ensure_seoul_now(now)
-    qt = get_qt_code(seoul_now.date())
+    regions = collect_search_regions(latitude, longitude, radius_km)
+    jobs = [(name, qd, q0, q1) for name, qd in depts for q0, q1 in regions]
+    # 진료과×지역 조회는 서로 독립이라 동시에 부른다 (각각 1시간 캐시)
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+        fetched = pool.map(lambda j: fetch_raw_hospitals(qd=j[1], q0=j[2], q1=j[3]), jobs)
+        per_dept: dict[str, dict[str, dict[str, Any]]] = {name: {} for name, _ in depts}
+        for (name, *_), rows in zip(jobs, fetched):
+            for row in rows:
+                hpid = _clean_str_or_none(row.get("hpid"))
+                if hpid:
+                    per_dept[name].setdefault(hpid, row)
 
-    raw_rows: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    for q0, q1 in collect_search_regions(latitude, longitude, radius_km):
-        for row in fetch_raw_hospitals(qd=qd, q0=q0, q1=q1, qt=qt):
-            hpid = _clean_str_or_none(row.get("hpid"))
-            if hpid:
-                if hpid in seen_ids:
-                    continue
-                seen_ids.add(hpid)
-            raw_rows.append(row)
+    max_results = get_max_results()
+    merged: dict[str, Hospital] = {}
+    # 진료과마다 최대 max_results곳을 뽑아 합친다 (한 과가 결과를 독차지하지 않게)
+    for name, rows in per_dept.items():
+        for h in _rank(rows.values(), name, latitude, longitude, radius_km, open_now, seoul_now)[:max_results]:
+            if h.hospital_id in merged:
+                merged[h.hospital_id].departments.append(name)
+            else:
+                merged[h.hospital_id] = h
 
+    hospitals = sorted(merged.values(), key=_sort_key)
+    return HospitalListResponse(
+        as_of=seoul_now.isoformat(timespec="seconds"),
+        source_updated_at=None,
+        total_count=len(hospitals),
+        hospitals=hospitals,
+    )
+
+
+def _sort_key(h: Hospital) -> tuple:
+    # 진료 중인 병원 먼저, 그다음 가까운 순 (open_now=false에서 진료 중 병원이 잘리지 않게)
+    return (not h.is_open, h.distance_km, h.name)
+
+
+def _rank(rows, standard_dept, latitude, longitude, radius_km, open_now, seoul_now) -> list[Hospital]:
     candidates: list[Hospital] = []
-    for row in raw_rows:
+    for row in rows:
         h_lat = _parse_float_or_none(row.get("wgs84Lat"))
         h_lon = _parse_float_or_none(row.get("wgs84Lon"))
         if h_lat is None or h_lon is None:
@@ -159,10 +200,6 @@ def search_open_hospitals(
         if not hospital_id or not name or not address:
             continue
 
-        phone = _clean_str_or_none(row.get("dutyTel1"))
-        open_hours_list = build_open_hours(row)
-        dist_rounded = round(dist, 2)
-
         candidates.append(
             Hospital(
                 hospital_id=hospital_id,
@@ -171,20 +208,11 @@ def search_open_hospitals(
                 latitude=h_lat,
                 longitude=h_lon,
                 department=standard_dept,
-                phone=phone,
-                open_hours=open_hours_list,
+                departments=[standard_dept],
+                phone=_clean_str_or_none(row.get("dutyTel1")),
+                open_hours=build_open_hours(row),
                 is_open=open_flag,
-                distance_km=dist_rounded,
+                distance_km=round(dist, 2),
             )
         )
-
-    candidates.sort(key=lambda h: (h.distance_km, h.name))
-    max_results = get_max_results()
-    trimmed = candidates[:max_results]
-
-    return HospitalListResponse(
-        as_of=seoul_now.isoformat(timespec="seconds"),
-        source_updated_at=None,
-        total_count=len(trimmed),
-        hospitals=trimmed,
-    )
+    return sorted(candidates, key=_sort_key)

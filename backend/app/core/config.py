@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     APP_PORT: int = 8000
     REDIS_URL: str = "redis://localhost:6379/0"
     SESSION_TTL_SECONDS: int = Field(default=1800, ge=1)
-    MAX_CHAT_TURNS: int = Field(default=5, ge=1, le=5)
+    MAX_CHAT_TURNS: int = Field(default=7, ge=1, le=10)
     AI_PROVIDER: str = "clova_triage"
     AI_REQUEST_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=120)
     AI_MOCK_ENABLED: bool = False

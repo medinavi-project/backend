@@ -88,6 +88,9 @@ class MedicationCard(BaseModel):
     guidance_status: Literal["AVAILABLE", "PARTIAL", "UNAVAILABLE"]
     # User-facing caution: auto-matched from an OCR typo, or permit not active.
     warning: str | None = None
+    # CLOVA Voice: READY면 audio_url(GET, mp3, 1시간 유효)을 재생. 음성은 재생 시 생성.
+    audio_status: Literal["READY", "NOT_GENERATED"] = "NOT_GENERATED"
+    audio_url: str | None = None
 
 
 class UncertainMedicationCard(BaseModel):

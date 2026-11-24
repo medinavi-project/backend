@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     NCP_MAPS_CLIENT_ID: SecretStr = SecretStr("")
     NCP_MAPS_CLIENT_SECRET: SecretStr = SecretStr("")
     KDCA_API_KEY: SecretStr = SecretStr("")
+    # CLOVA Voice(복약 안내 음성) 전용 NCP 키. 지도 키(NCP_MAPS_*)와 별개.
+    CLOVA_VOICE_CLIENT_ID: SecretStr = SecretStr("")
+    CLOVA_VOICE_CLIENT_SECRET: SecretStr = SecretStr("")
+    CLOVA_VOICE_SPEAKER: str = "nara"
     HOSPITAL_RADIUS_MAX_KM: float = 10
     HOSPITAL_MAX_RESULTS: int = 20
     MEDICATION_AI_ENABLED: bool = True

@@ -15,6 +15,7 @@ from app.routers import chat, hospitals, medications
 from app.services.analysis_service import AnalysisService
 from app.services.chat_service import ChatService
 from app.services.ocr_service import OCRService
+from app.services.voice_service import VoiceService
 
 
 def create_app(settings=None, provider=None):
@@ -47,6 +48,7 @@ def create_app(settings=None, provider=None):
             settings,
         )
         app.state.ocr = OCRService(settings)
+        app.state.voice = VoiceService(settings, redis)
         try:
             yield
         finally:
@@ -101,7 +103,7 @@ def create_app(settings=None, provider=None):
                 "ai_configured": settings.AI_PROVIDER == "mock"
                 or bool(settings.CLOVASTUDIO_API_KEY.get_secret_value()),
                 "ocr": settings.OCR_PROVIDER.upper(),
-                "tts": "DISABLED",
+                "tts": "ENABLED" if app.state.voice.configured else "DISABLED",
             },
         )
 

@@ -229,6 +229,20 @@ def retrieve_medlineplus_rag(state, verbose=False):
 
     en_queries = generate_medlineplus_queries(state)
 
+    # MediNavi: 미리 만든 FAISS 인덱스(MedlinePlus 전체 문서)에서 찾는다.
+    # 인덱스가 없거나 실패하면 아래의 실시간 검색으로 넘어간다.
+    top_docs = None
+    try:
+        from app.triage import medlineplus_index
+
+        if medlineplus_index.available():
+            query_text = " / ".join([korean_query, *en_queries])
+            top_docs = medlineplus_index.search(get_embedding(query_text), k=3)
+    except Exception:
+        top_docs = None
+    if top_docs:
+        return _finish_rag(en_queries, top_docs, verbose)
+
     raw_docs = fetch_medlineplus_docs(en_queries, retmax=6)
     if not raw_docs:
         if verbose:
@@ -253,6 +267,10 @@ def retrieve_medlineplus_rag(state, verbose=False):
     except Exception:
         top_docs = [dict(d) for d in raw_docs[:3]]
 
+    return _finish_rag(en_queries, top_docs, verbose)
+
+
+def _finish_rag(en_queries, top_docs, verbose=False):
     # MedlinePlus 영문 문서 제목을 한국어 병명/증상명으로 번역
     ko_titles = translate_titles_to_korean([d["title"] for d in top_docs])
     for doc, ko_title in zip(top_docs, ko_titles):

@@ -27,7 +27,7 @@ class ChatInput(BaseModel):
     symptoms: Symptoms
     answered_fields: list[SymptomField]
     turn_count: int = Field(ge=1)
-    max_turns: int = Field(ge=1, le=5)
+    max_turns: int = Field(ge=1, le=10)
     # Opaque per-session state of an engine that keeps its own memory.
     engine_state: dict = Field(default_factory=dict)
 

@@ -14,7 +14,10 @@ router = APIRouter(prefix="/api/v1/hospitals", tags=["병원"])
 # Contract follows the hosAI hospital module (NMC public API).
 @router.get("/open", response_model=ApiResponse[HospitalListResponse])
 async def hospitals(
-    department: Annotated[str, Query()],
+    department: Annotated[
+        str,
+        Query(description="진료과. 여러 개는 쉼표로 구분 (예: 내과,외과), 최대 5개"),
+    ],
     latitude: Annotated[float, Query()],
     longitude: Annotated[float, Query()],
     radius_km: Annotated[float, Query()],

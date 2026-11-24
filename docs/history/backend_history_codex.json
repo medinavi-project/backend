@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "prepared_at": "2026-11-24",
+  "timezone": "Asia/Seoul",
+  "scope": "Codex conversation history; later Git evidence separate",
+  "records": [
+    {
+      "id": "CODEX-H01",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "초기 명세 해석과 환경 구성",
+      "problem": "처음에는 Notion 계약을 우선하도록 요청됐으나 저장소가 비어 있었고 명세 검색에서 MediNavi를 찾지 못했다. 이후 사용자가 자체 완결 명세를 제공해 이를 기준으로 전환했다.",
+      "change": "Python 3.12 backend/.venv, FastAPI 패키지와 의존성 구성. 로컬 Homebrew libexpat 충돌에 DYLD_LIBRARY_PATH 임시 대응.",
+      "evidence": "환경 구성과 패키지 설치 실행. 전역 Python 설치를 사용하지 않음.",
+      "limitations": "초기 명세 확보 과정은 최종 제품 기능과 구분한다."
+    },
+    {
+      "id": "CODEX-H02",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "백엔드 공통 기반",
+      "problem": "AI가 교체돼도 API와 세션 로직을 유지할 구조가 필요했다.",
+      "change": "Router/Service/AI Provider/Redis Repository 분리. 공통 code/message/data, 중앙 오류 코드·전역 예외 처리, Swagger 구현.",
+      "evidence": "초기 20개→22개 자동 테스트 통과 기록. Docker 빌드와 health/docs/openapi HTTP 200 확인.",
+      "limitations": "당시 테스트 개수이며 현재 전체 성능·테스트 수를 뜻하지 않음."
+    },
+    {
+      "id": "CODEX-H03",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "Redis 문진 상태와 중복 요청",
+      "problem": "서버가 이전 대화를 보관하고 동시 요청·재전송에도 턴과 JSON이 중복되지 않아야 했다.",
+      "change": "UUID 세션, TTL 1800초, 대화·증상·결과 저장, client_message_id 멱등성, Redis 잠금·Lua 소유권 검사. 동일 ID와 다른 내용은 409. 결과 조회·동일 메시지 재전송은 TTL 미연장.",
+      "evidence": "실제 임시 Redis로 TTL·만료·동시성·재전송·분석 중 조회·실패 상태 확인. Swagger 기본 UUID 재사용으로 생긴 409를 실세션 메타데이터로 진단.",
+      "limitations": "client_message_id는 프론트에서 메시지별 생성하고 재전송에만 재사용."
+    },
+    {
+      "id": "CODEX-H04",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "Gemini 연결 호환성 수정",
+      "problem": "실제 문진 생성에서 502가 발생했다.",
+      "change": "Gemini 전송 스키마에서 additionalProperties를 제거하고 로컬 Pydantic 검증은 유지. 인증·429·타임아웃 등 오류 매핑.",
+      "evidence": "실제 upstream 400에서 additional_properties 미지원 확인. 이어 gemini-2.5-flash-lite가 신규 사용자에게 미제공이라는 404 확인. 모델 자동 교체는 하지 않음. 이후 실제 연결 성공 기록 존재.",
+      "limitations": "SDK 스키마 호환 오류와 모델 제공 정책 오류는 다른 문제였다."
+    },
+    {
+      "id": "CODEX-H05",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "핫 리로드와 컨테이너 개발 환경",
+      "problem": "코드 변경마다 개발 서버를 수동 재시작하는 불편이 있었다.",
+      "change": "docker-compose.dev.yml의 읽기 전용 소스 마운트와 uvicorn --reload, backend/dev.sh 준비. Redis 기본 호스트 포트 제거로 기존 6379 충돌 해소.",
+      "evidence": "실제 파일 변경 감지·서버 재시작 로그와 Healthy 확인.",
+      "limitations": "개발용 핫 리로드와 NCP 배포용 이미지 실행 설정을 구분."
+    },
+    {
+      "id": "CODEX-H06",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "증상 분석 범위 재조정",
+      "problem": "AI 최소화 지시를 넓게 해석해 최초에는 요약만 제공하고 질환·진료과를 항상 비워둔 문제가 있었다.",
+      "change": "사용자 확인 후 외부 AI의 의심 질환·이유·추천 진료과를 검증·저장하도록 수정.",
+      "evidence": "가상 사용자 입력을 실제 Gemini로 실행. 3턴 문진과 결과 조회 성공. 다른 입력에서 PRELIMINARY와 의심 질환·진료과 반환 확인.",
+      "limitations": "실제 환자 진단이나 RAG 근거 검증 완료를 의미하지 않는다."
+    },
+    {
+      "id": "CODEX-H07",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "문진 종료 기준과 문맥 손실 개선",
+      "problem": "필수 항목이 채워져 문진은 끝났지만 분석은 정보 부족으로 나왔다. 묵직함 같은 표현은 증상 DTO에 없어 분석 입력에서 빠졌다.",
+      "change": "분석에 전체 대화·누적 증상·확인 항목·현재/최대 턴 전달. 정보 부족 시 추가 질문, 최대 5턴 제한.",
+      "evidence": "제어된 AI 대역으로 추가 문진·한도·멱등성 확인. 실제 Gemini 결과에 묵직한 느낌이 반영됨. 당시 자동 테스트 30개 통과.",
+      "limitations": "실제 추가 질문 분기가 모든 실험에서 발생한 것은 아니다."
+    },
+    {
+      "id": "CODEX-H08",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "외부 LLM 통합 응답 계약",
+      "problem": "문진 응답과 최종 분석 응답을 설명하면서 현재 코드와 제안 계약을 혼동했다. 사용자는 한 규격으로 정리하길 원했다.",
+      "change": "action, symptom_updates, answered_fields, next_question, analysis의 통합 계약 채택. ASK_FOLLOW_UP은 JSON 갱신+질문, COMPLETE는 마지막 갱신+최종 분석. 기존 프론트 응답으로 변환.",
+      "evidence": "통합 규격·잘못된 조합·최대 턴·부분 갱신 검증 테스트. 당시 56개 통과. 실연동 중 Gemini 503도 발생해 정상 처리와 외부 장애를 구분 보고.",
+      "limitations": "후속 Claude 작업에서 문진 엔진이 다시 교체됐으므로 이 단계는 역사적 구조다."
+    },
+    {
+      "id": "CODEX-H09",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "의약품 단일 API로 흐름 단순화",
+      "problem": "처음에는 scan/guide가 분리됐고 OCR 전용 ocr까지 추가해 사용자 의도와 어긋났다.",
+      "change": "사용자 요청에 따라 의약품은 POST /api/v1/medications/scan 하나로 통일. 사진→OCR→후속 AI를 서버 내부에서 처리. guide/ocr 엔드포인트 제거.",
+      "evidence": "실제 실행 중 Swagger의 의약품 경로가 scan 하나인지 확인. 당시 62개 자동 테스트 통과.",
+      "limitations": "중간의 OCR-only 구현과 최종 AI 연결 구현을 구분."
+    },
+    {
+      "id": "CODEX-H10",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "CLOVA OCR 실제 연결",
+      "problem": "Gemini 이미지 인식으로 OCR을 임의 대체하지 말라는 요구가 있었다.",
+      "change": "CLOVA General OCR V2, X-OCR-SECRET, Invoke URL, base64 이미지, inferText/lineBreak 조합. 파일 크기·형식·인증·빈 텍스트 오류 처리.",
+      "evidence": "제공된 사진으로 실제 CLOVA 텍스트 추출 성공. 저해상도 이미지에서 약명 오타·함량 잘림도 관찰.",
+      "limitations": "OCR 성공과 최종 약품 안내 성공은 서로 다른 완료 조건."
+    },
+    {
+      "id": "CODEX-H11",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "제공된 Medicare 의약품 모듈 첫 통합",
+      "problem": "원본 모듈은 OCR 원문이 아니라 확인된 품목코드를 받는 식약처+DUR+CLOVA 구조였다.",
+      "change": "OCR 텍스트→약품명 추출→공식 검색→품목 식별→공식 근거·DUR→생성·검증을 연결. 동기 모듈은 threadpool로 실행. MFDS/CLOVA 설정 분리.",
+      "evidence": "실제 CLOVA가 JSON 코드블록과 약품명 키를 반환해 파싱 실패하는 것을 발견·정규화.",
+      "limitations": "OCR Secret과 CLOVA Studio API 키는 별개. import된 원본 모듈을 API 완성품으로 간주하지 않음."
+    },
+    {
+      "id": "CODEX-H12",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "약품 후보 검색과 오인식 분석",
+      "problem": "완전 문자열 일치만 요구해 괄호 성분명·단위·오타를 처리하지 못했다.",
+      "change": "공백·단위·괄호 정규화, 문자 유사도, 함량·제형 우선 정렬, 제한된 접두 검색. 점수와 사유 제공. 벡터 검색 Provider 인터페이스만 준비.",
+      "evidence": "타이레놀 공식 품목 매칭 성공. 복합 OCR에서 화록소정·부스코판 식별, 세프로바이 유사 후보와 라니드 유효기간만료 확인.",
+      "limitations": "유사도는 확률이 아니며 다른 약을 자동 확정하는 근거가 아니다. 벡터DB 실제 구축 안 함."
+    },
+    {
+      "id": "CODEX-H13",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "생성 형식과 validator 불일치 해결",
+      "problem": "자연스러운 설명을 생성시키면서 원문 전체 일치·주의사항 전체 인용을 요구해 생성 결과가 반복 보류됐다.",
+      "change": "일반 효능은 text+source_ids 구조화 요약, 용법·금기·주의사항은 공식 자료 별도 제공. 구조·품목·출처 검사와 의미적 정확성 검증을 구분.",
+      "evidence": "타이레놀 단일 실험에서 COMPLETED/OK/structured_source_linked 반환 확인. 다른 복합 입력에서는 검증 실패도 남음.",
+      "limitations": "단일 사례 성공을 모든 사진의 완료로 일반화하지 않는다."
+    },
+    {
+      "id": "CODEX-H14",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "전체 실패에서 약별 부분 결과로 전환",
+      "problem": "한 약이 미식별이면 다른 약 정보까지 보류되고, DUR unknown이나 부작용 자료 부재가 효능 생성도 막았다.",
+      "change": "판별/불확실 DTO 리스트·개수 분리. 공식 정보와 DUR 상태 분리. 식별 약만 안내 대상, 생성 실패 시 공식 효능 원문 fallback.",
+      "evidence": "복합 원문에서 판별 2개/불확실 표기 3개, 공식 원문 대체 2개 확인. DUR 중단 이유는 두 품목 성분 매핑 부족과 side_effects 근거 부재.",
+      "limitations": "summarized_count에 원문 fallback이 포함된 시기가 있었으므로 AI 요약 성공률로 제시하면 안 됨."
+    },
+    {
+      "id": "CODEX-H15",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "Final 인계 모듈 교체와 회귀 복구",
+      "problem": "새 모듈 연결 후 금액·일반 문구까지 후보로 추출, 함량 중간 잘림, 기존 부스코판 식별 실패가 발생했다.",
+      "change": "로컬 독립 행 후보 어댑터 추가. 원문 표기 보존. 넓은 검색 잘림과 정확한 전체 이름 검색을 분리하고 완전한 재조회만 식별에 사용.",
+      "evidence": "실제 원문 후보 9개→5개 표기, 식별 1개→2개 복원. 약물 선별 회귀 17개 통과 기록.",
+      "limitations": "단일 샘플에 과적합하지 않도록 미사용 이름·단위·제형·검색 불완전 사례도 검사. 원문 문장형/다중 약 행 누락 한계 있음."
+    },
+    {
+      "id": "CODEX-H16",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "프론트용 약품 DTO와 쉬운 주의사항",
+      "problem": "개발용 원문·출처·DUR가 많고 사용자가 읽을 설명이 묻힌다는 피드백.",
+      "change": "공개 약 카드에 item_seq/name/description/guidance_status. description은 purpose/how_to_take/precautions/side_effects/storage 5개 string|null. notice·sources·내부 검증 원문 제외. CLOVA 주의사항 리라이터 추가, 실패 시 원문 fallback.",
+      "evidence": "저장된 실제 조회 결과를 5필드 DTO로 변환. 관련 API 23개 검사 통과 기록. 최신 리라이터 추가 당시 사용자 요청으로 외부 호출·테스트를 미룸.",
+      "limitations": "새 문구 의미 보존 검증은 별도 확인 필요. 저장 데이터 변환을 새 실조회라고 표현하지 않는다."
+    },
+    {
+      "id": "CODEX-H17",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "배포 자동화와 NCP 접속 확인",
+      "problem": "main PR merge 후 시연 서버 자동 배포 요구. 초기 Docker Hub 제안 뒤 GHCR로 변경.",
+      "change": "GitHub Actions 검사→GHCR 이미지 업로드→NCP SSH→digest pull→Compose 재배포→health 검사·복구 시도. Secrets와 빈 서버 Docker 설치 안내.",
+      "evidence": "사용자 서버 출력에서 컨테이너 Healthy·내부 health200·0.0.0.0:8000 확인. ACG 확인 후 외부 101.79.27.212:8000/health 실제 HTTP200 확인.",
+      "limitations": "CD 성공은 OCR/AI 품질 성공을 보증하지 않는다. 서버 중지 요청은 원격 승인 거절로 직접 수행 못했고 명령만 제공."
+    },
+    {
+      "id": "CODEX-H18",
+      "period": "2026-11-20~2026-11-21 (대화 기준 추정; 개별 커밋과 일대일 대응 안 함)",
+      "origin": "Codex 대화 기록",
+      "title": "Claude 공유와 발표 이력 정리",
+      "problem": "후속 에이전트가 현재 상태와 과거 실험을 혼동하지 않도록 인계 필요.",
+      "change": "aigent.md 생성 및 gitignore 처리. 원본 작성자용 개선 프롬프트에 실제 OCR 원문·후속 실험·과적합 방지 기준 포함.",
+      "evidence": "현재 파일 작성은 Git 조회·대화 이력 종합이며 새 네트워크 기능 시험은 수행하지 않음.",
+      "limitations": "후속 Claude 수정은 아래 Git 확인 사실과 별도 이력으로 병합해야 한다."
+    }
+  ],
+  "observed_git_commits": [
+    "45afeb9|2026-11-23T13:37:25+09:00|에러로그 추가",
+    "df1c8d9|2026-11-22T15:22:53+09:00|1차완성",
+    "ea5459c|2026-11-22T15:12:49+09:00|hosAI 병원 검색·문진 엔진 통합, 약 스캔 속도 개선",
+    "79ff5b5|2026-11-21T17:08:34+09:00|OCR 개선",
+    "44b9d56|2026-11-21T15:33:43+09:00|1기본틀개발",
+    "d097b5c|2026-11-20T18:37:33+09:00|gemini_minimum"
+  ],
+  "uncommitted_snapshot": "M backend/app/ai/providers/clova_triage_provider.py\n M backend/app/core/config.py\n M backend/app/hospital/client.py\n M backend/app/hospital/geo.py\n M backend/app/hospital/models.py\n M backend/app/hospital/service.py\n M backend/app/routers/hospitals.py\n M backend/app/schemas/ai.py\n M backend/app/services/medication_presentation.py\n M backend/app/triage/chatbot.py"
+}

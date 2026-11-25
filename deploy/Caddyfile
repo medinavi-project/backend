@@ -12,9 +12,24 @@ medinavi.kro.kr {
 	request_body {
 		max_size 6MB
 	}
-	reverse_proxy api:8000 {
-		transport http {
-			read_timeout 150s
+
+	# 백엔드
+	@backend path /api/* /health /docs /docs/* /openapi.json
+	handle @backend {
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 150s
+			}
+		}
+	}
+
+	# 나머지는 프론트 (NCP Object Storage + Global Edge)
+	handle {
+		# 확장자 없는 화면 주소(/, /chat, /hospitals …)만 index.html로. 파일은 그대로 받는다.
+		@spa path_regexp ^/[^.]*$
+		rewrite @spa /index.html
+		reverse_proxy https://cuxxcwed0dpds9j8zrlo16933.edge.naverncp.com {
+			header_up Host cuxxcwed0dpds9j8zrlo16933.edge.naverncp.com
 		}
 	}
 }

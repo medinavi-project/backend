@@ -156,8 +156,8 @@ main으로 PR이 머지되면 GitHub Actions가 다음을 실행합니다.
 
 설정과 GitHub Secrets는 [deploy/README.md](../deploy/README.md)를 보세요. `.env` 내용(`BACKEND_ENV`)을 바꾸면 수동 배포해야 반영됩니다.
 
-- 서버: `http://101.79.27.212:8000` (Uvicorn이 직접 응답, NGINX·HTTPS 없음)
-- `nginx/nginx.conf`는 HTTPS가 필요해질 때 쓸 예시이고, 지금은 사용하지 않습니다.
+- 서버: `https://medinavi.kro.kr` (Caddy가 HTTPS를 받아 Uvicorn :8000으로 전달, 인증서 자동 발급)
+- 설정: [deploy/Caddyfile](../deploy/Caddyfile), [deploy/compose.yml](../deploy/compose.yml)
 
 ## 폴더 구조
 

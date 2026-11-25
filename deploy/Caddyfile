@@ -1,0 +1,20 @@
+{
+	email {$ACME_EMAIL}
+}
+
+medinavi.kro.kr {
+	# kro.kr은 여러 사람이 같이 쓰는 도메인이라 Let's Encrypt 발급 한도가 차 있을 때가 있다.
+	# ZeroSSL을 먼저 시도하고, 안 되면 Let's Encrypt로 받는다.
+	tls {
+		issuer acme https://acme.zerossl.com/v2/DV90
+		issuer acme https://acme-v02.api.letsencrypt.org/directory
+	}
+	request_body {
+		max_size 6MB
+	}
+	reverse_proxy api:8000 {
+		transport http {
+			read_timeout 150s
+		}
+	}
+}

@@ -12,4 +12,4 @@
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 ```
 
-Swagger: http://localhost:8000/docs
+Swagger: http://localhost:8000/docs (배포: https://medinavi.kro.kr/docs)

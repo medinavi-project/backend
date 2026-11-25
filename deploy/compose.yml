@@ -22,6 +22,21 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  caddy:
+    # HTTPS 리버스 프록시. medinavi.kro.kr 인증서를 자동으로 받고 갱신한다.
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -31,3 +46,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+volumes:
+  caddy_data:
+  caddy_config:

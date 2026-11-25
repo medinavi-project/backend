@@ -76,12 +76,12 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           stage=$(mktemp -d)
           trap 'rm -rf "$stage"; rm -f ~/.ssh/ncp_key' EXIT
-          cp deploy/compose.yml deploy/release.sh "$stage/"
+          cp deploy/compose.yml deploy/release.sh deploy/Caddyfile "$stage/"
           printf '%s\n' "$BACKEND_ENV" > "$stage/.next-env"
           printf '%s\n' "$DOCKER_USER" > "$stage/.docker-user"
           printf '%s' "$DOCKER_TOKEN" > "$stage/.docker-token"
           printf '%s@%s\n' "$IMAGE" "$IMAGE_DIGEST" > "$stage/.next-image"
           ssh_opts=(-i ~/.ssh/ncp_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           ssh "${ssh_opts[@]}" -p "$port" "$NCP_USER@$NCP_HOST" 'umask 077; mkdir -p ~/medinavi; chmod 700 ~/medinavi'
-          scp "${ssh_opts[@]}" -P "$port" "$stage/compose.yml" "$stage/release.sh" "$stage/.next-env" "$stage/.next-image" "$stage/.docker-user" "$stage/.docker-token" "$NCP_USER@$NCP_HOST:medinavi/"
+          scp "${ssh_opts[@]}" -P "$port" "$stage/compose.yml" "$stage/release.sh" "$stage/Caddyfile" "$stage/.next-env" "$stage/.next-image" "$stage/.docker-user" "$stage/.docker-token" "$NCP_USER@$NCP_HOST:medinavi/"
           ssh "${ssh_opts[@]}" -p "$port" "$NCP_USER@$NCP_HOST" 'bash ~/medinavi/release.sh'

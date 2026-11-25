@@ -629,9 +629,21 @@ def validate_backend_response(payload):
     return True
 
 
+QUESTION_ENDINGS = ("?", "요", "까")
+
+
+def _is_question(text):
+    """질문 문장인지: 물음표나 '~요/~까'로 끝나야 한다. 끝에 붙은 괄호 예시는 무시."""
+    t = re.sub(r"\([^)]*\)\s*$", "", text.strip()).rstrip(" .!~")
+    return t.endswith(QUESTION_ENDINGS)
+
+
 def _pick_next_question(current_state, raw_question=None):
     required = required_fields(current_state)
     q = _normalize_str_or_none(raw_question)
+    if q and not _is_question(q):
+        # LLM이 질문 대신 항목 설명("추가적인 증상이 있는지 여부")을 쓴 경우 → 기본 질문으로
+        q = None
     if q:
         # 이 증상에 필요 없는 슬롯을 묻는 질문은 버린다 (예: 기침에 통증 강도)
         if "severity" not in required and any(w in q for w in ("강도", "0에서 10", "몇 점")):

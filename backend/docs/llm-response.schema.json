@@ -157,7 +157,8 @@
     "action": {
       "enum": [
         "ASK_FOLLOW_UP",
-        "COMPLETE"
+        "COMPLETE",
+        "EMERGENCY"
       ],
       "title": "Action",
       "type": "string"
@@ -202,6 +203,38 @@
           "type": "null"
         }
       ]
+    },
+    "emergency_guidance": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Emergency Guidance"
+    },
+    "engine_state": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Engine State"
+    },
+    "references": {
+      "items": {
+        "type": "string"
+      },
+      "title": "References",
+      "type": "array"
     }
   },
   "required": [

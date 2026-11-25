@@ -27,6 +27,8 @@ export API_IMAGE="$image"
 if docker compose -f compose.yml pull api && docker compose -f compose.yml up -d --wait --wait-timeout 150; then
   printf '%s\n' "$image" > .current-image
   rm -f .env.rollback
+  # Caddyfile은 파일만 바뀌면 compose가 컨테이너를 다시 만들지 않으므로 매번 새로 띄워 반영한다.
+  docker compose -f compose.yml up -d --force-recreate --no-deps caddy
   docker compose -f compose.yml ps
 else
   echo 'Deployment failed; restoring previous API image and environment'

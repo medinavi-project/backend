@@ -51,7 +51,8 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ github.event.pull_request.merge_commit_sha || github.sha }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # PR이 닫힌 뒤(merge 이벤트)에는 캐시 쓰기 권한이 없어 실패할 수 있다. 캐시 저장 실패로 배포를 막지 않는다.
+          cache-to: type=gha,mode=max,ignore-error=true
       - name: Deploy immutable image over SSH
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}

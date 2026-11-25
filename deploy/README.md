@@ -16,7 +16,7 @@ GitHub 저장소 → Settings → Secrets and variables → Actions → New repo
 | NCP_SSH_PRIVATE_KEY | 서버 authorized_keys의 공개키에 대응하는 전용 SSH 개인키 전체. 자동화용 비암호화 키 사용 |
 | NCP_SSH_PORT | SSH 포트. 기본 22이므로 생략 가능 |
 | NCP_SSH_KNOWN_HOSTS | 서버 SSH 호스트 공개키의 known_hosts 행. 서버 콘솔에서 fingerprint를 확인한 뒤 등록 |
-| BACKEND_ENV | backend/.env 전체 내용. 실제 CLOVA OCR·식약처·CLOVA Studio(약 설명 CLOVA_API_KEY, 문진 CLOVASTUDIO_API_KEY)·공공데이터포털·네이버 지도 키 포함. 여러 줄 그대로 붙여넣기 |
+| BACKEND_ENV | backend/.env 전체 내용. 실제 CLOVA OCR·식약처·CLOVA Studio(약 설명 CLOVA_API_KEY, 문진 CLOVASTUDIO_API_KEY)·공공데이터포털·네이버 지도·CLOVA Voice 키 포함. `MAX_CHAT_TURNS=7`. 여러 줄 그대로 붙여넣기 |
 
 이미지는 `ghcr.io/medinavi-project/backend`에 업로드합니다. 별도 GHCR 저장소를 미리 생성하거나 DOCKERHUB_USERNAME/DOCKERHUB_TOKEN을 등록할 필요가 없습니다. Actions가 제공하는 GITHUB_TOKEN에 packages:write 권한을 부여해 업로드하고, 배포 작업 중 같은 임시 토큰으로 NCP에서 ghcr.io에 로그인해 private 이미지도 pull합니다. 토큰은 작업 완료 후 만료되고 서버의 임시 Docker 인증 파일은 삭제됩니다. 패키지 공개 설정은 필수가 아닙니다. 조직 정책에서 Actions의 패키지 생성·접근을 허용해야 합니다. 기존에 같은 패키지가 있으면 이 저장소에 Actions 접근 권한을 부여해야 할 수 있습니다.
 

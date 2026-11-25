@@ -1,6 +1,6 @@
 # NCP GHCR CD 설정
 
-대상 저장소: medinavi-project/backend. 대상 서버: **101.79.27.212**.
+대상 저장소: medinavi-project/backend. 대상 서버: **101.79.27.212** (`https://medinavi.kro.kr`).
 
 main 대상 PR이 merge될 때만 자동 실행합니다. 닫기만 한 PR이나 main 직접 push는 배포하지 않습니다. 수동 실행은 Actions의 main 브랜치 workflow_dispatch를 사용합니다. main에 이 워크플로 파일이 먼저 반영돼야 합니다.
 
@@ -16,7 +16,7 @@ GitHub 저장소 → Settings → Secrets and variables → Actions → New repo
 | NCP_SSH_PRIVATE_KEY | 서버 authorized_keys의 공개키에 대응하는 전용 SSH 개인키 전체. 자동화용 비암호화 키 사용 |
 | NCP_SSH_PORT | SSH 포트. 기본 22이므로 생략 가능 |
 | NCP_SSH_KNOWN_HOSTS | 서버 SSH 호스트 공개키의 known_hosts 행. 서버 콘솔에서 fingerprint를 확인한 뒤 등록 |
-| BACKEND_ENV | backend/.env 전체 내용. 실제 CLOVA OCR·식약처·CLOVA Studio(약 설명 CLOVA_API_KEY, 문진 CLOVASTUDIO_API_KEY)·공공데이터포털·네이버 지도·CLOVA Voice 키 포함. `MAX_CHAT_TURNS=7`. 여러 줄 그대로 붙여넣기 |
+| BACKEND_ENV | backend/.env 전체 내용. 실제 CLOVA OCR·식약처·CLOVA Studio(약 설명 CLOVA_API_KEY, 문진 CLOVASTUDIO_API_KEY)·공공데이터포털·네이버 지도·CLOVA Voice 키 포함. `MAX_CHAT_TURNS=7`, `CORS_ORIGINS`(프론트 주소), `ACME_EMAIL`(인증서 발급 알림 메일, 필수). 여러 줄 그대로 붙여넣기 |
 
 이미지는 `ghcr.io/medinavi-project/backend`에 업로드합니다. 별도 GHCR 저장소를 미리 생성하거나 DOCKERHUB_USERNAME/DOCKERHUB_TOKEN을 등록할 필요가 없습니다. Actions가 제공하는 GITHUB_TOKEN에 packages:write 권한을 부여해 업로드하고, 배포 작업 중 같은 임시 토큰으로 NCP에서 ghcr.io에 로그인해 private 이미지도 pull합니다. 토큰은 작업 완료 후 만료되고 서버의 임시 Docker 인증 파일은 삭제됩니다. 패키지 공개 설정은 필수가 아닙니다. 조직 정책에서 Actions의 패키지 생성·접근을 허용해야 합니다. 기존에 같은 패키지가 있으면 이 저장소에 Actions 접근 권한을 부여해야 할 수 있습니다.
 
@@ -51,16 +51,21 @@ chmod 700 ~/medinavi
 ```
 
 4. 배포 전용 SSH 공개키를 배포 계정 ~/.ssh/authorized_keys에 등록합니다. 디렉터리 700, 파일 600 권한을 적용합니다. 개인키는 GitHub Secret에만 등록합니다.
-5. NCP ACG와 서버 방화벽에서 TCP 8000(API), 실제 SSH 포트를 허용합니다. Redis 6379는 외부에 열지 않습니다. GitHub-hosted runner는 IP가 가변이므로 SSH 접근 정책을 이에 맞춰 설정해야 합니다.
-6. 위 SSH/BACKEND_ENV Secrets를 등록합니다. NCP 서버의 ghcr.io·이미지 다운로드 엔드포인트·공공 API·AI API로의 outbound HTTPS도 허용돼야 합니다.
-7. 이 변경을 PR로 main에 merge합니다. Actions에서 테스트·빌드·배포 완료를 확인합니다.
+5. NCP ACG와 서버 방화벽에서 TCP 80·443(Caddy), 실제 SSH 포트를 허용합니다. 80은 인증서 발급 확인에 필요합니다. 8000은 Caddy를 거치게 되면 닫아도 됩니다. 서버에서 80/443을 쓰는 다른 프로그램(NGINX 등)이 있으면 꺼야 합니다. Redis 6379는 외부에 열지 않습니다. GitHub-hosted runner는 IP가 가변이므로 SSH 접근 정책을 이에 맞춰 설정해야 합니다.
+6. 내도메인.한국에서 `medinavi.kro.kr`의 IP 연결(A 레코드)을 `101.79.27.212`로 설정합니다.
+7. 위 SSH/BACKEND_ENV Secrets를 등록합니다. NCP 서버의 ghcr.io·이미지 다운로드 엔드포인트·공공 API·AI API로의 outbound HTTPS도 허용돼야 합니다.
+8. 이 변경을 PR로 main에 merge합니다. Actions에서 테스트·빌드·배포 완료를 확인합니다.
 
 NCP 자체 API 키는 SSH 배포에 사용하지 않으므로 필요 없습니다.
 
 ## 접속 및 확인
 
-- Swagger: http://101.79.27.212:8000/docs
-- Health: http://101.79.27.212:8000/health
+- Swagger: https://medinavi.kro.kr/docs
+- Health: https://medinavi.kro.kr/health
+
+## HTTPS (Caddy)
+
+`deploy/Caddyfile`이 `medinavi.kro.kr`의 80/443을 받아 `api:8000`으로 넘깁니다. 인증서는 Caddy가 자동으로 받고 갱신하며 `caddy_data` 볼륨에 보관합니다. kro.kr은 Let's Encrypt 발급 한도를 다른 사용자와 같이 쓰므로 ZeroSSL을 먼저 시도하고 Let's Encrypt로 넘어갑니다. 인증서 문제는 `docker compose -f compose.yml logs caddy`로 확인합니다.
 
 ```bash
 # 서버 배포 계정으로 로그인한 뒤
